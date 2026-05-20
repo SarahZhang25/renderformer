@@ -1,0 +1,59 @@
+# Training Notes
+# add linear warmup and double epochs
+# add cosine decay
+# add LPIPS loss with log transforms and tone-mapping
+# lower resolution to 128
+# increase LR to 1e-4 from 5e-5
+# --> double training epochs
+
+model:
+  latent_dim: 768
+  num_layers: 12
+  num_heads: 6
+  dim_feedforward: 3072
+  num_register_tokens: 16
+  dropout: 0.0
+  activation: swiglu
+  norm_type: rms_norm
+  norm_first: True
+  view_indep_qk_norm: True
+  qk_norm: True
+  bias: False
+  pe_type: rope
+  rope_type: triangle
+  rope_double_max_freq: False
+  vertex_pe_num_freqs: 12
+  use_vn_encoder: True
+  vn_pe_num_freqs: 6
+  vn_encoder_norm_type: rms_norm
+  texture_encode_patch_size: 32
+  texture_channels: 13
+  texture_encoder_norm_type: rms_norm
+  view_transformer_latent_dim: 768
+  view_transformer_ffn_hidden_dim: 3072
+  view_transformer_n_heads: 6
+  view_transformer_n_layers: 6
+  view_transformer_include_self_attn: True
+  view_transformer_use_swin_attn: False
+  vdir_pe_type: nerf
+  vdir_num_freqs: 0
+  patch_size: 8
+  include_alpha: False
+  use_dpt_decoder: True
+  dpt_features: 128
+  dpt_out_channels: [96, 192, 384, 768]
+  turn_to_cam_coord: True
+  use_ldr: False
+
+training:
+  h5_path: "tmp/cbox/cbox.h5" 
+  gt_dir: "output/cbox/"
+  log_dir: "training/logs"
+  resolution: 128
+  batch_size: 1
+  epochs: 2000
+  warmup_epochs: 200
+  lr: 1e-4
+  device: "cuda"
+  use_amp: True
+
