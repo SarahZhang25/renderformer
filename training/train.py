@@ -51,7 +51,6 @@ def train():
     
     dataset = SingleSceneDataset(training_config['h5_path'], training_config['gt_dir'], resolution=training_config.get('resolution', 512))
     
-    # Custom collate_fn ensures we properly batch since single scene just repeats the geometry anyway
     dataloader = DataLoader(dataset, batch_size=training_config.get('batch_size', 1), shuffle=True)
     
     optimizer = AdamW(model.parameters(), lr=float(training_config.get('lr', 1e-4)))
@@ -158,8 +157,7 @@ def train():
             gt_hdr = gt_img.unsqueeze(1)
             
             if not config.use_ldr:
-                # The model natively predicts log10(HDR + 1), so supervise it directly in this space!
-                # This guarantees stable, non-zero gradients for dark regions avoiding dead ReLUs.
+                # The model natively predicts log10(HDR + 1), so supervise it directly in log HDR space
                 gt_log = torch.log10(gt_hdr.relu() + 1.0)
                 loss_l1 = loss_fn(raw_rendered_imgs, gt_log)
                 
@@ -168,7 +166,7 @@ def train():
                 loss_l1 = loss_fn(raw_rendered_imgs, gt_hdr)
                 rendered_imgs = raw_rendered_imgs
             
-            # Tone map to clamp(log(I) / log(2), 0, 1)
+            # Tone map for LPIPS calculation according to paper
             tm_rendered = tone_map(rendered_imgs)
             tm_gt = tone_map(gt_hdr)
             
@@ -204,6 +202,7 @@ def train():
         writer.add_scalar('Train/Loss', avg_loss, epoch)
         writer.add_scalar('Train/PSNR', avg_psnr, epoch)
         
+        # Log images for visualization
         if (epoch + 1) % 100 == 0:
             print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f} - PSNR: {avg_psnr:.4f}")
             with torch.no_grad():
