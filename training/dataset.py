@@ -1,3 +1,4 @@
+import glob
 import h5py
 import imageio
 import numpy as np
@@ -5,6 +6,76 @@ import os
 import torch
 
 from torch.utils.data import Dataset
+
+class SceneDataset(Dataset):
+    def __init__(
+        self,
+        data_dir: str,
+        image_res: int = 128,
+        max_dataset_size = None,
+        split: str = "all",
+    ):
+        self.data_dir = data_dir
+        self.image_res = image_res
+
+        # Find all completed cases (must have .h5)
+        self.files = glob.glob(os.path.join(data_dir, "*.h5"))
+        self.files.sort()
+        
+        # Shuffle with a fixed seed
+        if split == "all":
+            print(f"[{split}] Using all {len(self.files)} samples in {data_dir}")
+        else:
+            assert split in ['train', 'val'], "split must be 'train', 'val', or 'all'"
+            rng = np.random.RandomState(42)
+            rng.shuffle(self.files)
+            
+            split_idx = int(len(self.files) * 0.9)
+            if split == 'train':
+                self.files = self.files[:split_idx]
+            else:
+                self.files = self.files[split_idx:]
+                
+        if max_dataset_size is not None and max_dataset_size < len(self.files):
+            self.files = self.files[:max_dataset_size]
+                
+        print(f"[{split}] Found {len(self.files)} samples in {data_dir}")
+
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        file_path = self.files[idx]
+        with h5py.File(file_path, 'r') as f:
+            triangles = torch.from_numpy(np.array(f['triangles'])).float()
+            texture = torch.from_numpy(np.array(f['texture'])).float()
+            vn = torch.from_numpy(np.array(f['vn'])).float()
+            c2w = torch.from_numpy(np.array(f['c2w'])).float()
+            fov = torch.from_numpy(np.array(f['fov'])).float()
+            mask = torch.ones(triangles.shape[0], dtype=torch.bool)
+        
+        num_views = c2w.shape[0]
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        gt_imgs = []
+        for i in range(num_views):
+            gt_path = os.path.join(self.data_dir, f"{base_name}_{i}.exr")
+            gt_img = imageio.v3.imread(gt_path).astype(np.float32)
+            gt_imgs.append(torch.from_numpy(gt_img))
+            
+        gt_img = torch.stack(gt_imgs, dim=0)
+        
+        return {
+            'triangles': triangles,
+            'texture': texture,
+            'mask': mask,
+            'vn': vn,
+            'c2w': c2w,
+            'fov': fov,
+            'gt_img': gt_img
+        }
+
 
 class SingleSceneDataset(Dataset):
     def __init__(self, h5_path, gt_dir, resolution=512):
@@ -25,22 +96,23 @@ class SingleSceneDataset(Dataset):
         self.base_name = os.path.splitext(os.path.basename(self.h5_path))[0]
         
     def __len__(self):
-        return self.num_views
+        return 1
 
     def __getitem__(self, idx):
-        c2w = self.c2w[idx] # [4, 4]
-        fov = self.fov[idx:idx+1]
-        
-        gt_path = os.path.join(self.gt_dir, f"{self.base_name}_view_{idx}.exr")
-        gt_img = imageio.v3.imread(gt_path).astype(np.float32)
-        gt_img = torch.from_numpy(gt_img)
+        gt_imgs = []
+        for i in range(self.num_views):
+            gt_path = os.path.join(self.gt_dir, f"{self.base_name}_view_{i}.exr")
+            gt_img = imageio.v3.imread(gt_path).astype(np.float32)
+            gt_imgs.append(torch.from_numpy(gt_img))
+            
+        gt_img = torch.stack(gt_imgs, dim=0)
         
         return {
             'triangles': self.triangles,
             'texture': self.texture,
             'mask': self.mask,
             'vn': self.vn,
-            'c2w': c2w,
-            'fov': fov,
+            'c2w': self.c2w,
+            'fov': self.fov,
             'gt_img': gt_img
         }

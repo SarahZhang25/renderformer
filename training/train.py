@@ -93,8 +93,8 @@ def train():
             texture = batch['texture'].to(device)
             mask = batch['mask'].to(device)
             vn = batch['vn'].to(device)
-            c2w = batch['c2w'].unsqueeze(1).to(device) # Add view dim: [bs, 1, 4, 4]
-            fov = batch['fov'].unsqueeze(-1).to(device) if batch['fov'].dim() == 2 else batch['fov'].to(device)
+            c2w = batch['c2w'].to(device)
+            fov = batch['fov'].to(device)
             if fov.dim() == 2:
                 fov = fov.unsqueeze(-1)
             gt_img = batch['gt_img'].to(device)
@@ -154,7 +154,7 @@ def train():
             # rendered_imgs: [bs, nv, C, H, W] -> [bs, nv, H, W, C]
             raw_rendered_imgs = rendered_imgs.permute(0, 1, 3, 4, 2)
             
-            gt_hdr = gt_img.unsqueeze(1)
+            gt_hdr = gt_img
             
             if not config.use_ldr:
                 # The model natively predicts log10(HDR + 1), so supervise it directly in log HDR space
@@ -178,7 +178,7 @@ def train():
             loss = loss_l1 + 0.05 * loss_lpips
             
             with torch.no_grad():
-                mse = torch.nn.functional.mse_loss(rendered_imgs, gt_img.unsqueeze(1))
+                mse = torch.nn.functional.mse_loss(rendered_imgs, gt_img)
                 psnr = -10.0 * torch.log10(mse + 1e-8)
                 epoch_psnr += psnr.item()
             
@@ -211,7 +211,7 @@ def train():
                 img_ldr = (img_ldr * 255).to(torch.uint8)
                 img_ldr = img_ldr.permute(2, 0, 1)
 
-                gt_hdr = gt_img[0].detach().cpu()
+                gt_hdr = gt_img[0, 0].detach().cpu()
                 gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0)
                 gt_ldr = (gt_ldr * 255).to(torch.uint8)
                 gt_ldr = gt_ldr.permute(2, 0, 1)
