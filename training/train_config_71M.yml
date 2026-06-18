@@ -46,14 +46,16 @@ model:
 training:
   data_dir: "tmp/dataset_single_obj"
   log_dir: "training/logs/dataset_single_obj"
-  max_dataset_size: 1
+  max_dataset_size: 10
   resolution: 128
-  batch_size: 1
-  val_batch_size: 1      # batch size for validation dataloader
+  batch_size: 10           # process all cached scenes in one forward pass
+  val_batch_size: 10
   epochs: 2000
   warmup_epochs: 200
   lr: 1e-4
   device: "cuda"
-  use_amp: False  # disabled: bfloat16 crushes small grads in log-HDR space and destabilizes LPIPS
-  log_viz_interval: 100  # epochs between validation runs and image logging
+  num_workers: 0           # workers for initial cache-fill DataLoader
+  use_amp: True            # bf16 autocast on model forward; losses run in fp32
+  use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
+  log_viz_interval: 100    # epochs between validation + image logging
   checkpoint_interval: 500
