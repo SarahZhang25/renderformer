@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from lpips import LPIPS
 
-from dataset import SingleSceneDataset
+from dataset import SceneDataset
 
 from renderformer.models.config import RenderFormerConfig
 from renderformer.models.renderformer import RenderFormer
@@ -32,8 +32,37 @@ def tone_map(img): # as according to paper
 
 def linear_to_srgb(x: torch.Tensor) -> torch.Tensor:
     a = 0.055
-    x = torch.clamp(x, 0.0, 1.0)
+    x = torch.clamp(x, min=0.0, max=1.0)
     return torch.where(x <= 0.0031308, 12.92 * x, (1 + a) * torch.pow(x, 1/2.4) - a)
+
+def tone_map_reinhard(x, exposure=1.0):
+    x = x * exposure
+    return x / (x + 1.0)
+
+def to_uint8(x):
+    """
+    Convert float image [0, 1] to uint8 [0, 255].
+    """
+    x = torch.clamp(x, 0.0, 1.0)
+    return (x * 255).byte()
+
+def hdr_to_ldr(x, method="reinhard", exposure=1.0, to_uint8_output=True):
+    """
+    Convert HDR image to LDR for visualization using specified tone mapping method.
+
+    Args:
+        x: Input HDR image tensor
+        method: Current hard-coded to reinhard # "reinhard", "gamma", or "none". 
+        exposure: Exposure value for tone mapping
+
+    Returns:
+        Tone-mapped image in [0, 1] range
+    """
+    x = tone_map_reinhard(x, exposure=exposure)
+    x = linear_to_srgb(x)
+    if to_uint8_output:
+        x = to_uint8(x)
+    return x
 
 def train():
     parser = argparse.ArgumentParser()
@@ -54,10 +83,21 @@ def train():
     
     ray_generator = RayGenerator().to(device)
     
-    dataset = SingleSceneDataset(training_config['h5_path'], training_config['gt_dir'], resolution=training_config.get('resolution', 512))
+    dataset_train = SceneDataset(
+        data_dir=training_config['data_dir'], 
+        resolution=training_config.get('resolution', 512),
+        split='all', # 'train'
+        max_dataset_size=training_config.get('max_dataset_size', None)
+    )
+    # dataset_val = SceneDataset(
+    #     data_dir=training_config['data_dir'], 
+    #     resolution=training_config.get('resolution', 512),
+    #     split='val',
+    # )
     
-    dataloader = DataLoader(dataset, batch_size=training_config.get('batch_size', 1), shuffle=True)
-    
+    dataloader_train = DataLoader(dataset_train, batch_size=training_config.get('batch_size', 1), shuffle=True)
+    # dataloader_val = DataLoader(dataset_val, batch_size=training_config.get('batch_size', 1), shuffle=True)
+    # TODO: write val loop. 
     optimizer = AdamW(model.parameters(), lr=float(training_config.get('lr', 1e-4)))
     loss_fn = torch.nn.L1Loss()
     lpips_fn = LPIPS(net='vgg').to(device)
@@ -77,7 +117,7 @@ def train():
     scaler = torch.amp.GradScaler(device.type) if training_config.get('use_amp', False) else None
 
     # Logging
-    base_log_dir = training_config.get('log_dir', 'runs/renderformer_exp')
+    base_log_dir = training_config.get('log_dir', f'training/logs/{dataset_train.data_dir.split("/")[-1]}')
     run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = os.path.join(base_log_dir, run_id)
     print("Logging to:", log_dir)
@@ -93,7 +133,8 @@ def train():
     for epoch in tqdm(range(epochs)):
         epoch_loss = 0.0
         epoch_psnr = 0.0
-        for batch in dataloader:
+        for batch in dataloader_train:
+            # TODO: extract this preprocssing to a helper function.
             triangles = batch['triangles'].to(device)
             texture = batch['texture'].to(device)
             mask = batch['mask'].to(device)
@@ -196,27 +237,42 @@ def train():
             optimizer.zero_grad()
             if scaler:
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
             
             epoch_loss += loss.item()
             
-        avg_loss = epoch_loss / len(dataloader)
-        avg_psnr = epoch_psnr / len(dataloader)
-        
-        writer.add_scalar('Train/LR', optimizer.param_groups[0]['lr'], epoch)
+        avg_loss = epoch_loss / len(dataloader_train)
+        avg_psnr = epoch_psnr / len(dataloader_train)
         
         scheduler.step()
+        writer.add_scalar('Train/LR', optimizer.param_groups[0]['lr'], epoch)
         writer.add_scalar('Train/Loss', avg_loss, epoch)
         writer.add_scalar('Train/PSNR', avg_psnr, epoch)
         
         # Log images for visualization
-        if (epoch + 1) % 100 == 0:
+        if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f} - PSNR: {avg_psnr:.4f}")
             with torch.no_grad():
+                # img_hdr = rendered_imgs[0, 0].detach().cpu()
+                # img_ldr_viz = hdr_to_ldr(img_hdr, to_uint8_output=True)
+
+                # # img_ldr = torch.clamp(img_hdr, 0.0, 1.0)
+                # # img_ldr = (img_ldr * 255).to(torch.uint8)
+                # img_ldr_viz = img_ldr_viz.permute(2, 0, 1)
+
+                # gt_hdr = gt_img[0, 0].detach().cpu()
+                # gt_ldr_viz = hdr_to_ldr(gt_hdr, to_uint8_output=True)
+                # # gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0)
+                # # gt_ldr = (gt_ldr * 255).to(torch.uint8)
+                # gt_ldr_viz = gt_ldr_viz.permute(2, 0, 1)
+
                 img_hdr = rendered_imgs[0, 0].detach().cpu()
                 # img_ldr = torch.clamp(img_hdr, 0.0, 1.0) # use this for default examples
                 img_hdr = img_hdr / (1.0 + img_hdr) # Reinhard tone mapping
@@ -233,6 +289,19 @@ def train():
 
                 combined_ldr = torch.cat([img_ldr, gt_ldr], dim=2)
                 writer.add_image('Train/Rendered_vs_GT', combined_ldr, epoch)
+
+        # Save checkpoint every 500 epochs
+        if (epoch + 1) % 500 == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch+1}.pt")
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'loss': avg_loss,
+            }, checkpoint_path)
+            print(f"Saved checkpoint to {checkpoint_path}")
+    
 
 if __name__ == '__main__':
     train()

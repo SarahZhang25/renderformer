@@ -11,17 +11,20 @@ class SceneDataset(Dataset):
     def __init__(
         self,
         data_dir: str,
-        image_res: int = 128,
+        resolution: int = 128,
         max_dataset_size = None,
         split: str = "all",
+        split_proportion: float = 0.9
     ):
         self.data_dir = data_dir
-        self.image_res = image_res
+        self.resolution = resolution
 
         # Find all completed cases (must have .h5)
         self.files = glob.glob(os.path.join(data_dir, "*.h5"))
         self.files.sort()
-        
+        if max_dataset_size is not None and max_dataset_size < len(self.files):
+            self.files = self.files[:max_dataset_size]
+
         # Shuffle with a fixed seed
         if split == "all":
             print(f"[{split}] Using all {len(self.files)} samples in {data_dir}")
@@ -30,14 +33,12 @@ class SceneDataset(Dataset):
             rng = np.random.RandomState(42)
             rng.shuffle(self.files)
             
-            split_idx = int(len(self.files) * 0.9)
+            split_idx = int(len(self.files) * split_proportion)
             if split == 'train':
                 self.files = self.files[:split_idx]
             else:
                 self.files = self.files[split_idx:]
                 
-        if max_dataset_size is not None and max_dataset_size < len(self.files):
-            self.files = self.files[:max_dataset_size]
                 
         print(f"[{split}] Found {len(self.files)} samples in {data_dir}")
 
@@ -62,10 +63,23 @@ class SceneDataset(Dataset):
         for i in range(num_views):
             gt_path = os.path.join(self.data_dir, f"{base_name}_{i}.exr")
             gt_img = imageio.v3.imread(gt_path).astype(np.float32)
-            gt_imgs.append(torch.from_numpy(gt_img))
-            
+            gt_img = torch.from_numpy(gt_img)
+            # Keep only RGB channels if there is an alpha channel
+            if gt_img.shape[-1] == 4:
+                gt_img = gt_img[..., :3]
+            gt_imgs.append(gt_img)
+
+        # Stack all views to shape: [num_views, H, W, C]
         gt_img = torch.stack(gt_imgs, dim=0)
         
+        # Resize if necessary
+        if gt_img.shape[1] != self.resolution:
+            # Permute to shape expected by interpolate: [N, C, H, W] (where N = num_views)
+            gt_img = gt_img.permute(0, 3, 1, 2) 
+            gt_img = torch.nn.functional.interpolate(gt_img, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False)
+            # Permute back to shape: [num_views, H, W, C]
+            gt_img = gt_img.permute(0, 2, 3, 1)
+
         return {
             'triangles': triangles,
             'texture': texture,
@@ -78,11 +92,12 @@ class SceneDataset(Dataset):
 
 
 class SingleSceneDataset(Dataset):
-    def __init__(self, h5_path, gt_dir, resolution=512):
-        self.h5_path = h5_path
-        self.gt_dir = gt_dir
-        self.resolution = resolution
+    def __init__(self, data_dir, resolution=512):
+        self.data_dir = data_dir
+        self.h5_path = glob.glob(os.path.join(data_dir, "*.h5"))[0]
         
+        self.resolution = resolution
+
         with h5py.File(self.h5_path, 'r') as f:
             self.triangles = torch.from_numpy(np.array(f['triangles'])).float()
             self.num_tris = self.triangles.shape[0]
@@ -101,11 +116,24 @@ class SingleSceneDataset(Dataset):
     def __getitem__(self, idx):
         gt_imgs = []
         for i in range(self.num_views):
-            gt_path = os.path.join(self.gt_dir, f"{self.base_name}_view_{i}.exr")
+            gt_path = os.path.join(self.data_dir, f"{self.base_name}_view_{i}.exr")
             gt_img = imageio.v3.imread(gt_path).astype(np.float32)
-            gt_imgs.append(torch.from_numpy(gt_img))
+            gt_img = torch.from_numpy(gt_img)
+            # Keep only RGB channels if there is an alpha channel
+            if gt_img.shape[-1] == 4:
+                gt_img = gt_img[..., :3]
+            gt_imgs.append(gt_img)
             
+        # Stack all views to shape: [num_views, H, W, C]
         gt_img = torch.stack(gt_imgs, dim=0)
+        
+        # Resize if necessary
+        if gt_img.shape[1] != self.resolution:
+            # Permute to shape expected by interpolate: [N, C, H, W] (where N = num_views)
+            gt_img = gt_img.permute(0, 3, 1, 2)
+            gt_img = torch.nn.functional.interpolate(gt_img, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False)
+            # Permute back to shape: [num_views, H, W, C]
+            gt_img = gt_img.permute(0, 2, 3, 1)
         
         return {
             'triangles': self.triangles,
