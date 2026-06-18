@@ -27,6 +27,11 @@ from renderformer.models.renderformer import RenderFormer
 from renderformer.utils.ray_generator import RayGenerator
 from renderformer.utils.transform import trans_to_cam_coord
 
+# Global CUDA performance flags (safe defaults, no accuracy impact)
+torch.backends.cuda.matmul.allow_tf32 = True   # ~2x matmul throughput on Ampere+
+torch.backends.cudnn.allow_tf32       = True
+torch.backends.cudnn.benchmark        = True   # auto-tune convolution kernels
+
 
 # ---------------------------------------------------------------------------
 # Image Utilities
@@ -125,9 +130,16 @@ class Trainer:
             self.tc.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         )
         self.resolution = self.tc.get('resolution', 512)
+        self.use_amp    = self.tc.get('use_amp', False)
 
         self.model         = RenderFormer(self.model_config).to(self.device)
         self.ray_generator = RayGenerator().to(self.device)
+
+        # Optional torch.compile — speeds up transformer forward/backward ~20-50%
+        # after a one-time warm-up compilation on the first batch.
+        if self.tc.get('use_compile', False):
+            print("Compiling model with torch.compile (mode='reduce-overhead')...")
+            self.model = torch.compile(self.model, mode='reduce-overhead')
 
         # ---- Training hyper-parameters ----
         self.epochs              = self.tc.get('epochs', 100)
@@ -137,7 +149,7 @@ class Trainer:
         batch_size               = self.tc.get('batch_size', 64)
         val_batch_size           = self.tc.get('val_batch_size', batch_size)
 
-        # ---- Datasets & dataloaders ----
+        # ---- Datasets ----
         self.dataset_train = SceneDataset(
             data_dir=self.tc['data_dir'],
             resolution=self.resolution,
@@ -150,17 +162,54 @@ class Trainer:
             split='val',
             max_dataset_size=self.tc.get('max_dataset_size', None),
         )
-        self.dataloader_train = DataLoader(
-            self.dataset_train, batch_size=batch_size, shuffle=True
-        )
-        self.dataloader_val = DataLoader(
-            self.dataset_val, batch_size=val_batch_size, shuffle=False
-        )
+        # self.dataloader_train = DataLoader(
+        #     self.dataset_train, batch_size=batch_size, shuffle=True
+        # )
+        # self.dataloader_val = DataLoader(
+        #     self.dataset_val, batch_size=val_batch_size, shuffle=False
+        # )
 
         # ---- Fixed visualization batches (seeded for reproducibility) ----
         vis_size = min(16, batch_size)
         self.fixed_train_batch = self._get_seeded_batch(self.dataset_train, vis_size, seed=123)
         self.fixed_val_batch   = self._get_seeded_batch(self.dataset_val,   vis_size, seed=123)
+
+        # ---- GPU dataset cache ----
+        # Pre-compute all preprocessing (coord-transforms, rays, texture encoding)
+        # for the full train and val sets. For small datasets this eliminates all
+        # per-epoch I/O and CPU compute from the hot path. Each cached item is a
+        # dict of GPU tensors ready to be fed directly to _forward().
+        num_workers = self.tc.get('num_workers', 0)
+        print(f"Caching {len(self.dataset_train)} train batches on GPU...")
+        train_loader_for_cache = DataLoader(
+            self.dataset_train,
+            batch_size=batch_size,
+            shuffle=False,   # order doesn't matter here; we shuffle per-epoch below
+            num_workers=num_workers,
+            pin_memory=(num_workers > 0),
+        )
+        self.cached_train_inputs = [
+            self._preprocess_batch(batch) for batch in train_loader_for_cache
+        ]
+
+        print(f"Caching {len(self.dataset_val)} val batches on GPU...")
+        val_loader_for_cache = DataLoader(
+            self.dataset_val,
+            batch_size=val_batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(num_workers > 0),
+        )
+        self.cached_val_inputs = [
+            self._preprocess_batch(batch) for batch in val_loader_for_cache
+        ]
+
+        # Pre-process the fixed viz batches once too (already on GPU, just derive tensors)
+        self.cached_fixed_train_inputs = self._preprocess_batch(self.fixed_train_batch)
+        self.cached_fixed_val_inputs   = self._preprocess_batch(self.fixed_val_batch)
+
+        print(f"  Cached {len(self.cached_train_inputs)} train batch(es), "
+              f"{len(self.cached_val_inputs)} val batch(es) on {self.device}.")
 
         # ---- Optimizer & losses ----
         self.optimizer = AdamW(self.model.parameters(), lr=float(self.tc.get('lr', 1e-4)))
@@ -174,11 +223,6 @@ class Trainer:
             self.optimizer,
             schedulers=[warmup_sched, cosine_sched],
             milestones=[self.warmup_epochs],
-        )
-
-        self.scaler = (
-            torch.amp.GradScaler(self.device.type)
-            if self.tc.get('use_amp', False) else None
         )
 
         # ---- Logging ----
@@ -278,16 +322,22 @@ class Trainer:
     # ------------------------------------------------------------------
 
     def _forward(self, inputs: dict) -> torch.Tensor:
-        """Run the model, optionally under AMP autocast."""
+        """
+        Run the model forward pass.
+
+        When use_amp=True the model runs under bfloat16 autocast for speed.
+        Outputs are always returned in the autocast dtype; callers that feed
+        outputs into loss functions must cast to float32 themselves.
+        No GradScaler is needed for bf16 (only required for fp16).
+        """
+        args   = (inputs['triangles'], inputs['texture_log'], inputs['mask'], inputs['vn'])
         kwargs = dict(
             rays_o=inputs['rays_o'],
             rays_d=inputs['rays_d'],
             tri_vpos_view_tf=inputs['tri_vpos_view_tf'],
             tf32_view_tf=False,
         )
-        args = (inputs['triangles'], inputs['texture_log'], inputs['mask'], inputs['vn'])
-
-        if self.scaler:
+        if self.use_amp:
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                 return self.model(*args, **kwargs)
         return self.model(*args, **kwargs)
@@ -297,14 +347,18 @@ class Trainer:
         Compute L1 (in log-HDR space) + LPIPS losses and PSNR.
 
         Args:
-            rendered_imgs: Raw model output [bs, nv, C, H, W].
-            gt_img:        Ground-truth HDR  [bs, nv, H, W, C].
+            rendered_imgs: Raw model output [bs, nv, C, H, W]. May be bf16.
+            gt_img:        Ground-truth HDR  [bs, nv, H, W, C]. Always fp32.
 
         Returns:
-            loss:            Combined scalar loss tensor.
-            linear_rendered: Predicted images in linear HDR space [bs, nv, H, W, C].
+            loss:            Combined scalar loss tensor (fp32).
+            linear_rendered: Predicted images in linear HDR space [bs, nv, H, W, C] (fp32).
             psnr:            Scalar float PSNR (no grad).
         """
+        # Cast to float32 at the loss boundary — this is the key fix that lets us
+        # use bf16 for the model forward without losing precision in log/exp/LPIPS.
+        rendered_imgs = rendered_imgs.float()
+
         res = self.resolution
         raw = rendered_imgs.permute(0, 1, 3, 4, 2)  # [bs, nv, H, W, C]
 
@@ -355,63 +409,64 @@ class Trainer:
     # ------------------------------------------------------------------
 
     def _train_epoch(self) -> tuple[float, float]:
-        """Run one full training epoch. Returns (avg_loss, avg_psnr)."""
+        """
+        Run one full training epoch over the GPU-cached inputs.
+        Shuffles the cached list each epoch to preserve stochastic ordering.
+        Returns (avg_loss, avg_psnr).
+        """
         self.model.train()
         total_loss, total_psnr = 0.0, 0.0
 
-        for batch in self.dataloader_train:
-            inputs = self._preprocess_batch(batch)
+        # for batch in self.dataloader_train:
+        #     inputs = self._preprocess_batch(batch)
+        # Per-epoch shuffle via a random permutation of cached indices
+        indices = torch.randperm(len(self.cached_train_inputs)).tolist()
+        for idx in indices:
+            inputs = self.cached_train_inputs[idx]
             rendered = self._forward(inputs)
             loss, _, psnr = self._compute_losses(rendered, inputs['gt_img'])
 
             self.optimizer.zero_grad()
-            if self.scaler:
-                self.scaler.scale(loss).backward()
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
 
             total_loss += loss.item()
             total_psnr += psnr
 
-        n = len(self.dataloader_train)
+        # n = len(self.dataloader_train)
+        n = len(self.cached_train_inputs)
         return total_loss / n, total_psnr / n
 
     def _validate(self, epoch: int):
         """
-        Evaluate on the full validation set and log metrics + visualizations.
+        Evaluate on the GPU-cached validation set and log metrics + visualizations.
         Switches the model to eval mode and back before returning.
         """
         self.model.eval()
         total_loss, total_psnr = 0.0, 0.0
 
         with torch.no_grad():
-            # --- Full-set metrics ---
-            for batch in self.dataloader_val:
-                inputs = self._preprocess_batch(batch)
+            # # --- Full-set metrics ---
+            # for batch in self.dataloader_val:
+            #     inputs = self._preprocess_batch(batch)
+            # --- Full cached validation set metrics ---
+            for inputs in self.cached_val_inputs:
                 rendered = self._forward(inputs)
                 loss, _, psnr = self._compute_losses(rendered, inputs['gt_img'])
                 total_loss += loss.item()
                 total_psnr += psnr
 
-            n = len(self.dataloader_val)
+            n = len(self.cached_val_inputs)
             avg_val_loss = total_loss / n
             avg_val_psnr = total_psnr / n
 
             self._log_scalars('Val', {'Loss': avg_val_loss, 'PSNR': avg_val_psnr}, epoch)
             print(f"  Val  Loss: {avg_val_loss:.4f}  PSNR: {avg_val_psnr:.4f}")
 
-            # --- Visualizations on fixed seeded batches ---
-            train_inputs = self._preprocess_batch(self.fixed_train_batch)
-            self._log_vis_grid('Train/Rendered_vs_GT', train_inputs, epoch)
-
-            val_inputs = self._preprocess_batch(self.fixed_val_batch)
-            self._log_vis_grid('Val/Rendered_vs_GT', val_inputs, epoch)
+            # --- Visualizations on pre-processed fixed seeded batches ---
+            self._log_vis_grid('Train/Rendered_vs_GT', self.cached_fixed_train_inputs, epoch)
+            self._log_vis_grid('Val/Rendered_vs_GT',   self.cached_fixed_val_inputs,   epoch)
 
         self.model.train()
 
