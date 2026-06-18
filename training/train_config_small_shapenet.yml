@@ -1,0 +1,57 @@
+# Training Notes
+# smaller version using 512d tokens / 8 + 4 layers like from paper
+# about 71.7M params
+
+# train for longer
+
+model:
+  latent_dim: 512 # reduced
+  num_layers: 8 # reduced
+  num_heads: 4 # reduced
+  dim_feedforward: 2048 # reduced
+  num_register_tokens: 16
+  dropout: 0.0
+  activation: swiglu
+  norm_type: rms_norm
+  norm_first: True
+  view_indep_qk_norm: True
+  qk_norm: True
+  bias: False
+  pe_type: rope
+  rope_type: trianglea
+  rope_double_max_freq: False
+  vertex_pe_num_freqs: 12
+  use_vn_encoder: True
+  vn_pe_num_freqs: 6
+  vn_encoder_norm_type: rms_norm
+  texture_encode_patch_size: 32
+  texture_channels: 13
+  texture_encoder_norm_type: rms_norm
+  view_transformer_latent_dim: 512 # reduced
+  view_transformer_ffn_hidden_dim: 2048 # reduced
+  view_transformer_n_heads: 4 # reduced
+  view_transformer_n_layers: 4 # reduced
+  view_transformer_include_self_attn: True
+  view_transformer_use_swin_attn: False
+  vdir_pe_type: nerf
+  vdir_num_freqs: 0
+  patch_size: 8
+  include_alpha: False
+  use_dpt_decoder: True
+  dpt_features: 128
+  dpt_out_channels: [96, 192, 384, 768] # keep as before...?
+  turn_to_cam_coord: True
+  use_ldr: False
+
+training:
+  h5_path: "data_generation/datasets/attempt1_one_chair/case_001_03001627_eb9851403aca75937d395837145ded71_c0_r0.h5"
+  gt_dir: "data_generation/datasets/attempt1_one_chair"
+  log_dir: "training/logs/one_shapenet_chair"
+  resolution: 256
+  batch_size: 1
+  epochs: 20000
+  warmup_epochs: 1000
+  lr: 1e-4
+  device: "cuda"
+  use_amp: True
+

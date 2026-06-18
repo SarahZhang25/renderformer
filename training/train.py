@@ -25,10 +25,15 @@ from renderformer.models.renderformer import RenderFormer
 from renderformer.utils.ray_generator import RayGenerator
 from renderformer.utils.transform import trans_to_cam_coord
 
-def tone_map(img):
+def tone_map(img): # as according to paper
     # Tone map to clamp(log(I) / log(2), 0, 1)
     img = torch.log2(img.relu() + 1e-8)
     return torch.clamp(img, 0.0, 1.0)
+
+def linear_to_srgb(x: torch.Tensor) -> torch.Tensor:
+    a = 0.055
+    x = torch.clamp(x, 0.0, 1.0)
+    return torch.where(x <= 0.0031308, 12.92 * x, (1 + a) * torch.pow(x, 1/2.4) - a)
 
 def train():
     parser = argparse.ArgumentParser()
@@ -158,10 +163,16 @@ def train():
             
             if not config.use_ldr:
                 # The model natively predicts log10(HDR + 1), so supervise it directly in log HDR space
-                gt_log = torch.log10(gt_hdr.relu() + 1.0)
+                # gt_log = torch.log10(gt_hdr.relu() + 1.0)
+                gt_log = torch.log1p(gt_hdr.relu())
+
                 loss_l1 = loss_fn(raw_rendered_imgs, gt_log)
                 
-                rendered_imgs = torch.pow(10., raw_rendered_imgs) - 1.
+                # Convert back to linear space using torch.exp
+                # Clamp raw predictions to prevent NaNs during exponentiation
+                safe_raw_rendered = torch.clamp(raw_rendered_imgs, max=10.0) # A max of ~10.0 is safe (e^10 is ~22,026, well within fp16/tf32 limits)
+                rendered_imgs = torch.exp(safe_raw_rendered) - 1.0
+                # rendered_imgs = torch.pow(10., raw_rendered_imgs) - 1.
             else:
                 loss_l1 = loss_fn(raw_rendered_imgs, gt_hdr)
                 rendered_imgs = raw_rendered_imgs
@@ -207,12 +218,16 @@ def train():
             print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f} - PSNR: {avg_psnr:.4f}")
             with torch.no_grad():
                 img_hdr = rendered_imgs[0, 0].detach().cpu()
-                img_ldr = torch.clamp(img_hdr, 0.0, 1.0)
+                # img_ldr = torch.clamp(img_hdr, 0.0, 1.0) # use this for default examples
+                img_hdr = img_hdr / (1.0 + img_hdr) # Reinhard tone mapping
+                img_ldr = linear_to_srgb(img_hdr)
                 img_ldr = (img_ldr * 255).to(torch.uint8)
                 img_ldr = img_ldr.permute(2, 0, 1)
 
-                gt_hdr = gt_img[0, 0].detach().cpu()
-                gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0)
+                gt_hdr = gt_img[0].detach().cpu()
+                # gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0) # use this for default examples
+                gt_hdr = gt_hdr / (1.0 + gt_hdr) # Reinhard tone mapping
+                gt_ldr = linear_to_srgb(gt_hdr)
                 gt_ldr = (gt_ldr * 255).to(torch.uint8)
                 gt_ldr = gt_ldr.permute(2, 0, 1)
 

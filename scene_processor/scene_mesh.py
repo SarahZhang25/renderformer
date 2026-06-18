@@ -24,7 +24,7 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
     os.makedirs(split_mesh_folder_path, exist_ok=True)
 
     for obj_key, obj_config in scene_config.objects.items():
-        if obj_config.mesh_path.endswith(".glb"):
+        if obj_config.mesh_path.endswith(".glb") or ("shapenet" in obj_config.mesh_path.lower()):
             mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False, force='mesh')  # type: ignore
         else:
             mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False)  # type: ignore
