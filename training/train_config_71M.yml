@@ -1,10 +1,8 @@
 # Training Notes
 # smaller version using 512d tokens / 8 + 4 layers like from paper
 # about 71.7M params
-# --> train at 256x256 resolution
-# using log/exp in pre-L1 loss transformation instead of log10/pow10
-# and go back to res 128
-# train for 20K epochs
+# --> train at 128x128 resolution
+# new custom generated dataset
 
 model:
   latent_dim: 512 # reduced
@@ -46,14 +44,13 @@ model:
   use_ldr: False
 
 training:
-  h5_path: "tmp/cbox/cbox-lucy.h5" 
-  gt_dir: "output/cbox-lucy/"
-  log_dir: "training/logs/cbox-lucy/"
+  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
+  log_dir: "training/logs/ds1_single_obj_ball_cbox3"
+  max_dataset_size: 1
   resolution: 128
   batch_size: 1
-  epochs: 20000
+  epochs: 10000
   warmup_epochs: 1000
   lr: 1e-4
   device: "cuda"
   use_amp: True
-

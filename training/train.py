@@ -1,6 +1,7 @@
 '''
 Run with:
 python training/train.py --config training/train_config.yml
+python training/train.py --config training/train_config_71M.yml
 '''
 
 import os
@@ -63,6 +64,50 @@ def hdr_to_ldr(x, method="reinhard", exposure=1.0, to_uint8_output=True):
     if to_uint8_output:
         x = to_uint8(x)
     return x
+
+def preprocess_batch_inputs(config, batch, device, ray_generator, resolution):
+    triangles = batch['triangles'].to(device)
+    texture = batch['texture'].to(device)
+    mask = batch['mask'].to(device)
+    vn = batch['vn'].to(device)
+    c2w = batch['c2w'].to(device)
+    fov = batch['fov'].to(device)
+    if fov.dim() == 2:
+        fov = fov.unsqueeze(-1)
+    gt_img = batch['gt_img'].to(device)
+
+    bs, nv = c2w.shape[0], c2w.shape[1]
+
+    if config.texture_encode_patch_size == 1 and texture.dim() == 5:
+        texture = texture[:, :, :, 0, 0]
+    if not config.use_ldr:
+        texture_log = texture.clone()
+        texture_log[:, :, -3:] = torch.log10(texture_log[:, :, -3:] + 1.)
+    else:
+        texture_log = texture
+
+    if config.turn_to_cam_coord:
+        c2w_reshaped = c2w.reshape(-1, 4, 4)
+        triangles_repeated = torch.repeat_interleave(triangles, nv, dim=0)
+        tris_for_view_tf, c2w_for_view_tf, _ = trans_to_cam_coord(c2w_reshaped, triangles_repeated)
+        c2w_for_view_tf = c2w_for_view_tf.reshape(bs, nv, 4, 4)
+        tris_for_view_tf = tris_for_view_tf.reshape(bs, nv, -1, 3, 3)
+    else:
+        tris_for_view_tf = triangles.unsqueeze(1).expand(-1, nv, -1, -1, -1)
+        c2w_for_view_tf = c2w
+
+    rays_o, rays_d = ray_generator(c2w_for_view_tf, fov / 180. * torch.pi, resolution)
+
+    return {
+        'triangles': triangles.reshape(bs, -1, 9),
+        'texture_log': texture_log,
+        'mask': mask,
+        'vn': vn.reshape(bs, -1, 9),
+        'rays_o': rays_o,
+        'rays_d': rays_d,
+        'tri_vpos_view_tf': tris_for_view_tf.reshape(bs, nv, -1, 9),
+        'gt_img': gt_img,
+    }
 
 def train():
     parser = argparse.ArgumentParser()
@@ -134,39 +179,15 @@ def train():
         epoch_loss = 0.0
         epoch_psnr = 0.0
         for batch in dataloader_train:
-            # TODO: extract this preprocssing to a helper function.
-            triangles = batch['triangles'].to(device)
-            texture = batch['texture'].to(device)
-            mask = batch['mask'].to(device)
-            vn = batch['vn'].to(device)
-            c2w = batch['c2w'].to(device)
-            fov = batch['fov'].to(device)
-            if fov.dim() == 2:
-                fov = fov.unsqueeze(-1)
-            gt_img = batch['gt_img'].to(device)
-            
-            bs, nv = c2w.shape[0], c2w.shape[1]
-            
-            # Preprocess inputs
-            if config.texture_encode_patch_size == 1 and texture.dim() == 5:
-                texture = texture[:, :, :, 0, 0]
-            if not config.use_ldr:
-                texture_log = texture.clone()
-                texture_log[:, :, -3:] = torch.log10(texture_log[:, :, -3:] + 1.)
-            else:
-                texture_log = texture
-                
-            if config.turn_to_cam_coord:
-                c2w_reshaped = c2w.reshape(-1, 4, 4)
-                triangles_repeated = torch.repeat_interleave(triangles, nv, dim=0)
-                tris_for_view_tf, c2w_for_view_tf, _ = trans_to_cam_coord(c2w_reshaped, triangles_repeated)
-                c2w_for_view_tf = c2w_for_view_tf.reshape(bs, nv, 4, 4)
-                tris_for_view_tf = tris_for_view_tf.reshape(bs, nv, -1, 3, 3)
-            else:
-                tris_for_view_tf = triangles.unsqueeze(1).expand(-1, nv, -1, -1, -1)
-                c2w_for_view_tf = c2w
+            batch_inputs = preprocess_batch_inputs(
+                config=config,
+                batch=batch,
+                device=device,
+                ray_generator=ray_generator,
+                resolution=resolution,
+            )
 
-            rays_o, rays_d = ray_generator(c2w_for_view_tf, fov / 180. * torch.pi, resolution)
+            gt_img = batch_inputs['gt_img']
             
             tf32_view_tf = False
             
@@ -174,24 +195,24 @@ def train():
             if scaler:
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                     rendered_imgs = model(
-                        triangles.reshape(bs, -1, 9),
-                        texture_log,
-                        mask,
-                        vn.reshape(bs, -1, 9),
-                        rays_o=rays_o,
-                        rays_d=rays_d,
-                        tri_vpos_view_tf=tris_for_view_tf.reshape(bs, nv, -1, 9),
+                        batch_inputs['triangles'],
+                        batch_inputs['texture_log'],
+                        batch_inputs['mask'],
+                        batch_inputs['vn'],
+                        rays_o=batch_inputs['rays_o'],
+                        rays_d=batch_inputs['rays_d'],
+                        tri_vpos_view_tf=batch_inputs['tri_vpos_view_tf'],
                         tf32_view_tf=tf32_view_tf,
                     )
             else:
                 rendered_imgs = model(
-                    triangles.reshape(bs, -1, 9),
-                    texture_log,
-                    mask,
-                    vn.reshape(bs, -1, 9),
-                    rays_o=rays_o,
-                    rays_d=rays_d,
-                    tri_vpos_view_tf=tris_for_view_tf.reshape(bs, nv, -1, 9),
+                    batch_inputs['triangles'],
+                    batch_inputs['texture_log'],
+                    batch_inputs['mask'],
+                    batch_inputs['vn'],
+                    rays_o=batch_inputs['rays_o'],
+                    rays_d=batch_inputs['rays_d'],
+                    tri_vpos_view_tf=batch_inputs['tri_vpos_view_tf'],
                     tf32_view_tf=tf32_view_tf,
                 )
             
@@ -257,34 +278,17 @@ def train():
         writer.add_scalar('Train/PSNR', avg_psnr, epoch)
         
         # Log images for visualization
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 100 == 0:
             print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f} - PSNR: {avg_psnr:.4f}")
             with torch.no_grad():
-                # img_hdr = rendered_imgs[0, 0].detach().cpu()
-                # img_ldr_viz = hdr_to_ldr(img_hdr, to_uint8_output=True)
-
-                # # img_ldr = torch.clamp(img_hdr, 0.0, 1.0)
-                # # img_ldr = (img_ldr * 255).to(torch.uint8)
-                # img_ldr_viz = img_ldr_viz.permute(2, 0, 1)
-
-                # gt_hdr = gt_img[0, 0].detach().cpu()
-                # gt_ldr_viz = hdr_to_ldr(gt_hdr, to_uint8_output=True)
-                # # gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0)
-                # # gt_ldr = (gt_ldr * 255).to(torch.uint8)
-                # gt_ldr_viz = gt_ldr_viz.permute(2, 0, 1)
-
                 img_hdr = rendered_imgs[0, 0].detach().cpu()
-                # img_ldr = torch.clamp(img_hdr, 0.0, 1.0) # use this for default examples
-                img_hdr = img_hdr / (1.0 + img_hdr) # Reinhard tone mapping
-                img_ldr = linear_to_srgb(img_hdr)
-                img_ldr = (img_ldr * 255).to(torch.uint8)
+                img_ldr = hdr_to_ldr(img_hdr, to_uint8_output=True)
+                # print("img_ldr shape:", img_ldr.shape)
                 img_ldr = img_ldr.permute(2, 0, 1)
 
-                gt_hdr = gt_img[0].detach().cpu()
-                # gt_ldr = torch.clamp(gt_hdr, 0.0, 1.0) # use this for default examples
-                gt_hdr = gt_hdr / (1.0 + gt_hdr) # Reinhard tone mapping
-                gt_ldr = linear_to_srgb(gt_hdr)
-                gt_ldr = (gt_ldr * 255).to(torch.uint8)
+                gt_hdr = gt_img[0, 0].detach().cpu()
+                gt_ldr = hdr_to_ldr(gt_hdr, to_uint8_output=True)
+                # print("gt_ldr shape:", gt_ldr.shape)
                 gt_ldr = gt_ldr.permute(2, 0, 1)
 
                 combined_ldr = torch.cat([img_ldr, gt_ldr], dim=2)

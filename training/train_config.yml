@@ -51,4 +51,3 @@ training:
   lr: 1e-4
   device: "cuda"
   use_amp: False  # disabled: bfloat16 crushes small grads in log-HDR space and destabilizes LPIPS
-
