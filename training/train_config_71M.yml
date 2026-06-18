@@ -44,13 +44,16 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
-  log_dir: "training/logs/ds1_single_obj_ball_cbox3"
+  data_dir: "tmp/dataset_single_obj"
+  log_dir: "training/logs/dataset_single_obj"
   max_dataset_size: 1
   resolution: 128
   batch_size: 1
-  epochs: 10000
-  warmup_epochs: 1000
+  val_batch_size: 1      # batch size for validation dataloader
+  epochs: 2000
+  warmup_epochs: 200
   lr: 1e-4
   device: "cuda"
-  use_amp: True
+  use_amp: False  # disabled: bfloat16 crushes small grads in log-HDR space and destabilizes LPIPS
+  log_viz_interval: 100  # epochs between validation runs and image logging
+  checkpoint_interval: 500
