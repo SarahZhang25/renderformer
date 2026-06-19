@@ -326,7 +326,6 @@ class Trainer:
         When use_amp=True the model runs under bfloat16 autocast for speed.
         Outputs are always returned in the autocast dtype; callers that feed
         outputs into loss functions must cast to float32 themselves.
-        No GradScaler is needed for bf16 (only required for fp16).
         """
         args   = (inputs['triangles'], inputs['texture_log'], inputs['mask'], inputs['vn'])
         kwargs = dict(
@@ -489,17 +488,32 @@ class Trainer:
                 print(f"Epoch {epoch+1}/{self.epochs} - Train Loss: {avg_train_loss:.4f}  PSNR: {avg_train_psnr:.4f}")
                 self._validate(epoch)
 
-            # Checkpoint
+            # Checkpoint — save new, then delete all older ones
             if (epoch + 1) % self.checkpoint_interval == 0:
                 ckpt_path = os.path.join(self.checkpoint_dir, f"model_epoch_{epoch+1}.pt")
-                torch.save({
-                    'epoch':                epoch + 1,
-                    'model_state_dict':     self.model.state_dict(),
-                    'optimizer_state_dict': self.optimizer.state_dict(),
-                    'scheduler_state_dict': self.scheduler.state_dict(),
-                    'loss':                 avg_train_loss,
-                }, ckpt_path)
-                print(f"Saved checkpoint to {ckpt_path}")
+                tmp_path  = ckpt_path + ".tmp"
+                try:
+                    torch.save({
+                        'epoch':                epoch + 1,
+                        'model_state_dict':     self.model.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'scheduler_state_dict': self.scheduler.state_dict(),
+                        'loss':                 avg_train_loss,
+                    }, tmp_path)
+                    os.replace(tmp_path, ckpt_path)  # atomic rename
+                    print(f"Saved checkpoint to {ckpt_path}")
+
+                    # Remove all older checkpoints to save disk space
+                    for old_file in os.listdir(self.checkpoint_dir):
+                        old_path = os.path.join(self.checkpoint_dir, old_file)
+                        if old_path != ckpt_path and old_file.endswith('.pt'):
+                            os.remove(old_path)
+                            print(f"  Removed old checkpoint: {old_file}")
+
+                except (RuntimeError, OSError) as e:
+                    print(f"WARNING: Failed to save checkpoint at epoch {epoch+1}: {e}")
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
 
         self.writer.close()
         print("Training complete.")
