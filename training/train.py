@@ -146,7 +146,7 @@ class Trainer:
         self.warmup_epochs       = self.tc.get('warmup_epochs', 10)
         self.log_viz_interval    = self.tc.get('log_viz_interval', 100)
         self.checkpoint_interval = self.tc.get('checkpoint_interval', 500)
-        batch_size               = self.tc.get('batch_size', 1)
+        batch_size               = self.tc.get('batch_size', 64)
         val_batch_size           = self.tc.get('val_batch_size', batch_size)
 
         # ---- Datasets ----
@@ -231,6 +231,8 @@ class Trainer:
             f'training/logs/{self.dataset_train.data_dir.split("/")[-1]}'
         )
         run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        if self.tc.get('run_name'):
+            run_id += f"_{self.tc['run_name']}"
         self.log_dir        = os.path.join(base_log_dir, run_id)
         self.checkpoint_dir = os.path.join(self.log_dir, 'checkpoints')
 

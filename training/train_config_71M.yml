@@ -3,6 +3,7 @@
 # about 71.7M params
 # --> train at 128x128 resolution
 # new custom generated dataset
+# test run with refactored training run
 
 model:
   latent_dim: 512 # reduced
@@ -44,18 +45,19 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "tmp/dataset_single_obj"
-  log_dir: "training/logs/dataset_single_obj"
-  max_dataset_size: 10
+  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
+  log_dir: "training/logs/ds1_single_obj_ball_cbox3"
+  run_name: "full_ds"
+  # max_dataset_size: 10     # If none, will use entire dataset
   resolution: 128
   batch_size: 10           # process all cached scenes in one forward pass
-  val_batch_size: 10
-  epochs: 2000
-  warmup_epochs: 200
+  # val_batch_size: 10       # batch size for validation dataloader. If not defined, will default to same as batch_size
+  epochs: 10000
+  warmup_epochs: 1000
   lr: 1e-4
   device: "cuda"
   num_workers: 0           # workers for initial cache-fill DataLoader
   use_amp: True            # bf16 autocast on model forward; losses run in fp32
   use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
   log_viz_interval: 100    # epochs between validation + image logging
-  checkpoint_interval: 500
+  checkpoint_interval: 1000

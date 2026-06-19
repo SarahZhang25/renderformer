@@ -41,8 +41,8 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "tmp/dataset_single_obj"
-  log_dir: "training/logs/dataset_single_obj"
+  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
+  log_dir: "training/logs/ds1_single_obj_ball_cbox3"
   max_dataset_size: 10
   resolution: 128
   batch_size: 10           # process all cached scenes in one forward pass
