@@ -344,7 +344,7 @@ class Trainer:
 
     def _compute_losses(self, rendered_imgs: torch.Tensor, gt_img: torch.Tensor):
         """
-        Compute L1 (in log-HDR space) + LPIPS losses and PSNR.
+        Compute L1 (in log-HDR space) + LPIPS losses and tone-mapped PSNR.
 
         Args:
             rendered_imgs: Raw model output [bs, nv, C, H, W]. May be bf16.
@@ -380,7 +380,9 @@ class Trainer:
         loss = loss_l1 + 0.05 * loss_lpips
 
         with torch.no_grad():
-            mse  = torch.nn.functional.mse_loss(linear_rendered, gt_img)
+            ldr_rendered = hdr_to_ldr(linear_rendered, to_uint8_output=False)
+            ldr_gt = hdr_to_ldr(gt_img, to_uint8_output=False)
+            mse  = torch.nn.functional.mse_loss(ldr_rendered, ldr_gt)
             psnr = -10.0 * torch.log10(mse + 1e-8)
 
         return loss, linear_rendered, psnr.item()
