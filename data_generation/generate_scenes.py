@@ -48,6 +48,11 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
         # We need: all (transformed_vertices + t) inside the box bounds.
         mesh = trimesh.load(obj_path, process=False, force='mesh')
         
+        # Guard: skip objects that loaded with no geometry
+        if not hasattr(mesh, 'vertices') or len(mesh.vertices) == 0:
+            print(f"  Warning: object {obj_key} loaded with no vertices, skipping ({obj_path})")
+            continue
+        
         # Step 1: normalize (same as scene_mesh.py normalize_to_unit_sphere)
         mesh.vertices = mesh.vertices - mesh.vertices.mean(axis=0)
         bounding_sphere_radius = np.linalg.norm(mesh.vertices, ord=2, axis=-1).max() * 2.0
