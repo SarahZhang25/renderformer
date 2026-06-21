@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--num_workers", type=int, default=4, help="Number of parallel workers for rendering")
     parser.add_argument("--no_dump_blend", action="store_true", default=True, help="Do not save Blender file after rendering")
     parser.add_argument("--gpus", type=str, default=None, help="Comma-separated list of GPU indices to use (e.g., 0,1,2,3). If not specified, auto-detects all available GPUs.")
+    parser.add_argument("--timeout", type=int, default=3600, help="Per-scene render timeout in seconds (default: 3600). Hung processes are killed after this time.")
     
     args = parser.parse_args()
     
@@ -66,10 +67,37 @@ def main():
         print("No GPUs detected. Running without explicit GPU affinity.")
         
     import threading
+    import signal
     gpu_counter = 0
     gpu_lock = threading.Lock()
     
+    # Track active child processes so we can kill them on interrupt
+    active_procs: set[subprocess.Popen] = set()
+    procs_lock = threading.Lock()
+    shutdown_event = threading.Event()
+    
+    def kill_all():
+        with procs_lock:
+            for p in list(active_procs):
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+        # Give processes a moment to exit gracefully, then force-kill
+        import time
+        time.sleep(2)
+        with procs_lock:
+            for p in list(active_procs):
+                try:
+                    if p.poll() is None:
+                        p.kill()
+                except Exception:
+                    pass
+    
     def render_scene(scene_file):
+        if shutdown_event.is_set():
+            return False
+        
         gpu_id = None
         if gpu_list:
             with gpu_lock:
@@ -103,19 +131,58 @@ def main():
         if gpu_id is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
             
-        # Execute the command
+        # Execute using Popen so we can kill on interrupt or timeout
+        proc = subprocess.Popen(cmd, env=env, stderr=subprocess.PIPE)
+        with procs_lock:
+            active_procs.add(proc)
         try:
-            subprocess.run(cmd, check=True, env=env)
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error rendering {scene_file}: {e}")
+            _, stderr_bytes = proc.communicate(timeout=args.timeout)
+            success = proc.returncode == 0
+            if not success:
+                stderr_text = stderr_bytes.decode(errors='replace').strip() if stderr_bytes else ''
+                print(f"Error rendering {scene_file}: return code {proc.returncode}")
+                if stderr_text:
+                    print(f"  stderr:\n{stderr_text}")
+            return success
+        except subprocess.TimeoutExpired:
+            print(f"Timeout ({args.timeout}s) expired for {scene_file} — killing process")
+            proc.kill()
+            proc.communicate()
             return False
+        except Exception as e:
+            print(f"Error rendering {scene_file}: {e}")
+            try:
+                proc.kill()
+                proc.communicate()
+            except Exception:
+                pass
+            return False
+        finally:
+            with procs_lock:
+                active_procs.discard(proc)
 
     import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        results = list(executor.map(render_scene, scene_files))
-            
+    
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers)
+    futures = {executor.submit(render_scene, f): f for f in scene_files}
+    
+    try:
+        for future in concurrent.futures.as_completed(futures):
+            scene_file = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Unexpected error for {scene_file}: {e}")
+    except KeyboardInterrupt:
+        print("\nInterrupt received — killing all child rendering processes...")
+        shutdown_event.set()
+        kill_all()
+        executor.shutdown(wait=False)
+        print("All child processes terminated.")
+        return
+    else:
+        executor.shutdown(wait=True)
+        
     print("\nAll rendering tasks completed!")
 
 if __name__ == "__main__":
