@@ -1,9 +1,9 @@
 {
-    "scene_name": "cornell box 3 walls",
+    "scene_name": "cornell box 2 walls",
     "version": "1.0",
     "objects": {
         "background_0": {
-            "mesh_path": "templates/backgrounds/plane.obj",
+            "mesh_path": "backgrounds/plane.obj",
             "transform": {
                 "translation": [
                     0.0,
@@ -45,7 +45,7 @@
             }
         },
         "background_1": {
-            "mesh_path": "templates/backgrounds/wall0.obj",
+            "mesh_path": "backgrounds/wall0.obj",
             "transform": {
                 "translation": [
                     0.0,
@@ -86,92 +86,8 @@
                 "rand_tri_diffuse_seed": null
             }
         },
-        "background_2": {
-            "mesh_path": "templates/backgrounds/wall1.obj",
-            "transform": {
-                "translation": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "rotation": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "scale": [
-                    0.5,
-                    0.5,
-                    0.5
-                ],
-                "normalize": false
-            },
-            "material": {
-                "diffuse": [
-                    0.0,
-                    0.5,
-                    0.0
-                ],
-                "specular": [
-                    0.01,
-                    0.01,
-                    0.01
-                ],
-                "random_diffuse_max": 0.5,
-                "roughness": 0.99,
-                "emissive": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "smooth_shading": true,
-                "rand_tri_diffuse_seed": null
-            }
-        },
-        "background_3": {
-            "mesh_path": "templates/backgrounds/wall2.obj",
-            "transform": {
-                "translation": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "rotation": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "scale": [
-                    0.5,
-                    0.5,
-                    0.5
-                ],
-                "normalize": false
-            },
-            "material": {
-                "diffuse": [
-                    0.5,
-                    0.0,
-                    0.0
-                ],
-                "specular": [
-                    0.01,
-                    0.01,
-                    0.01
-                ],
-                "random_diffuse_max": 0.5,
-                "roughness": 0.99,
-                "emissive": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "smooth_shading": false,
-                "rand_tri_diffuse_seed": null
-            }
-        },
         "light_0": {
-            "mesh_path": "templates/lighting/tri.obj",
+            "mesh_path": "lighting/tri.obj",
             "transform": {
                 "translation": [
                     0.0,
