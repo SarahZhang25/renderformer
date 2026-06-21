@@ -84,9 +84,13 @@ def scene_to_img(
         bpy.context.scene.render.image_settings.color_mode = 'RGBA'
         bpy.context.scene.render.image_settings.file_format = 'OPEN_EXR'
         
-        bpy.context.preferences.addons["cycles"].preferences.get_devices()
+        cycles_pref = bpy.context.preferences.addons["cycles"].preferences
+        cycles_pref.compute_device_type = BLENDER_BACKEND
+        cycles_pref.get_devices()
+        for device in cycles_pref.devices:
+            if device.type == BLENDER_BACKEND or (BLENDER_BACKEND == 'OPTIX' and device.type == 'CUDA'):
+                device.use = True
         bpy.context.scene.cycles.device = 'GPU'
-        bpy.context.preferences.addons['cycles'].preferences.compute_device_type = BLENDER_BACKEND
         bpy.context.scene.render.threads = 8
         bpy.context.scene.render.threads_mode = 'FIXED'
 
