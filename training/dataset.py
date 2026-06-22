@@ -7,6 +7,44 @@ import torch
 
 from torch.utils.data import Dataset
 
+def scene_collate_fn(batch):
+    max_tris = max(item['triangles'].shape[0] for item in batch)
+    
+    batched_data = {
+        'triangles': [],
+        'texture': [],
+        'mask': [],
+        'vn': [],
+        'c2w': [],
+        'fov': [],
+        'gt_img': []
+    }
+    
+    for item in batch:
+        num_tris = item['triangles'].shape[0]
+        pad_size = max_tris - num_tris
+        
+        if pad_size > 0:
+            triangles = torch.cat([item['triangles'], item['triangles'].new_zeros(pad_size, *item['triangles'].shape[1:])], dim=0)
+            texture = torch.cat([item['texture'], item['texture'].new_zeros(pad_size, *item['texture'].shape[1:])], dim=0)
+            vn = torch.cat([item['vn'], item['vn'].new_zeros(pad_size, *item['vn'].shape[1:])], dim=0)
+            mask = torch.cat([item['mask'], item['mask'].new_zeros(pad_size, *item['mask'].shape[1:])], dim=0)
+        else:
+            triangles = item['triangles']
+            texture = item['texture']
+            vn = item['vn']
+            mask = item['mask']
+            
+        batched_data['triangles'].append(triangles)
+        batched_data['texture'].append(texture)
+        batched_data['mask'].append(mask)
+        batched_data['vn'].append(vn)
+        batched_data['c2w'].append(item['c2w'])
+        batched_data['fov'].append(item['fov'])
+        batched_data['gt_img'].append(item['gt_img'])
+        
+    return {k: torch.stack(v, dim=0) for k, v in batched_data.items()}
+
 class SceneDataset(Dataset):
     def __init__(
         self,
