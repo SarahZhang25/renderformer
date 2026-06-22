@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from lpips import LPIPS
 
-from dataset import SceneDataset
+from dataset import SceneDataset, scene_collate_fn
 
 from renderformer.models.config import RenderFormerConfig
 from renderformer.models.renderformer import RenderFormer
@@ -187,6 +187,7 @@ class Trainer:
             shuffle=False,   # order doesn't matter here; we shuffle per-epoch below
             num_workers=num_workers,
             pin_memory=(num_workers > 0),
+            collate_fn=scene_collate_fn,
         )
         self.cached_train_inputs = [
             self._preprocess_batch(batch) for batch in train_loader_for_cache
@@ -199,6 +200,7 @@ class Trainer:
             shuffle=False,
             num_workers=num_workers,
             pin_memory=(num_workers > 0),
+            collate_fn=scene_collate_fn,
         )
         self.cached_val_inputs = [
             self._preprocess_batch(batch) for batch in val_loader_for_cache
@@ -261,6 +263,7 @@ class Trainer:
             shuffle=True,       # shuffle so the seeded draw gives variety
             num_workers=0,      # 0 workers keeps generator deterministic
             generator=g,
+            collate_fn=scene_collate_fn,
         )
         batch = next(iter(loader))
         return {k: v.to(self.device) for k, v in batch.items()}
