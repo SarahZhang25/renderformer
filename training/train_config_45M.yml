@@ -1,21 +1,21 @@
 # Training Notes
-# smaller version using 512d tokens / 8 + 4 layers like from paper
-# about 71.8M params
+# smallest version using 384d tokens / 8 + 4 layers like from paper
+# about 45M params
 # --> train at 128x128 resolution
 # new custom generated dataset
 # test run with refactored training run
 
-# Total parameters:        71,771,535
-# Trainable parameters:    71,771,523
-# Transformer params:      33,570,822
-# View Transformer params: 31,314,313
-#         Out DPT params:          10,226,563
+# Total parameters:        45,358,350
+# Trainable parameters:    45,358,339
+# Transformer params:      18,886,662
+# View Transformer params: 21,925,896
+#         Out DPT params:          10,042,243
 
 model:
-  latent_dim: 512 # reduced
+  latent_dim: 384 # reduced
   num_layers: 8 # reduced
   num_heads: 4 # reduced
-  dim_feedforward: 2048 # reduced
+  dim_feedforward: 1536 # reduced
   num_register_tokens: 16
   dropout: 0.0
   activation: swiglu
@@ -31,11 +31,11 @@ model:
   use_vn_encoder: True
   vn_pe_num_freqs: 6
   vn_encoder_norm_type: rms_norm
-  texture_encode_patch_size: 32
+  texture_encode_patch_size: 30
   texture_channels: 13
   texture_encoder_norm_type: rms_norm
-  view_transformer_latent_dim: 512 # reduced
-  view_transformer_ffn_hidden_dim: 2048 # reduced
+  view_transformer_latent_dim: 384 # reduced
+  view_transformer_ffn_hidden_dim: 1536 # reduced
   view_transformer_n_heads: 4 # reduced
   view_transformer_n_layers: 4 # reduced
   view_transformer_include_self_attn: True
@@ -45,7 +45,7 @@ model:
   patch_size: 8
   include_alpha: False
   use_dpt_decoder: True
-  dpt_features: 128
+  dpt_features: 128 # could increase for more expressivity
   dpt_out_channels: [96, 192, 384, 768] # keep as before...?
   turn_to_cam_coord: True
   use_ldr: False
@@ -67,3 +67,5 @@ training:
   use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
   log_viz_interval: 100    # epochs between validation + image logging
   checkpoint_interval: 1000
+
+
