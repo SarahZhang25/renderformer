@@ -30,8 +30,16 @@ class MaterialConfig:
     """Seed for random triangle diffuse color, if None, use the diffuse color directly"""
     random_diffuse_max: float = 1.0
     """Maximum diffuse color of the material, used for random diffuse color"""
-    random_diffuse_type: Literal["per-triangle", "per-shading-group"] = "per-shading-group"
+    random_diffuse_type: Literal["per-triangle", "per-shading-group", "procedural"] = "per-shading-group"
     """Type of random diffuse color assignment, either per triangle or per shading group"""
+    procedural_pattern: Optional[str] = None
+    """Type of procedural pattern, e.g. 'sinusoidal', 'checkerboard'"""
+    procedural_frequency: Optional[List[float]] = None
+    """Frequency of the procedural pattern [x, y, z]"""
+    procedural_color_a: Optional[List[float]] = None
+    """Color A of the procedural pattern"""
+    procedural_color_b: Optional[List[float]] = None
+    """Color B of the procedural pattern"""
 
 
 @dataclass
