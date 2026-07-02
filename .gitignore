@@ -170,3 +170,4 @@ tmp/
 
 renderformer_paper/
 .vscode
+*.log*
