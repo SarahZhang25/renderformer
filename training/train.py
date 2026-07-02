@@ -1,7 +1,7 @@
 '''
 Run with:
 python training/train.py --config training/train_config.yml
-python training/train.py --config training/train_config_71M.yml
+CUDA_VISIBLE_DEVICES=0 python training/train.py --config training/train_config_71M.yml
 '''
 
 import os

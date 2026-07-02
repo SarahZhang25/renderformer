@@ -1,3 +1,11 @@
+"""
+Generate json scenes.
+
+Example usage:
+    python data_generation/generate_scenes.py --num_scenes 10 --output_dir datasets/json_scenes/cbox3_ten_objs
+
+"""
+
 import os
 import json
 import random
@@ -8,7 +16,8 @@ import trimesh
 import numpy as np
 
 def find_objaverse_objects():
-    objaverse_dir = os.path.expanduser("~/.objaverse")
+    objaverse_dir = os.path.expanduser("/home/sazhang/.objaverse")
+    print(f"Using objaverse_dir: {objaverse_dir}")
     # find all glb files
     glb_files = []
     for root, dirs, files in os.walk(objaverse_dir):
@@ -37,7 +46,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
         rel_path = os.path.relpath(obj_path, output_dir)
         
         # Scale and rotation
-        scale_val = random.uniform(0.3, 0.5)
+        scale_val = random.uniform(0.3, 0.7)
         scale = [scale_val, scale_val, scale_val]
         rotation = [random.uniform(0, 360), random.uniform(0, 360), random.uniform(0, 360)]
         
@@ -187,8 +196,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
     # Camera
     # FOV uniformly sampled [30, 60]
     fov = random.uniform(30.0, 60.0)
-    # Distance uniformly sampled between 2.1 and 2.7 units 
-    dist = random.uniform(2.1, 2.7)
+    # Distance uniformly sampled between 1.5 and 2.0 units 
+    dist = random.uniform(1.5, 2.0)
     # angle
     # To avoid being blocked by the back/side walls or floor, place the camera in the front-top area
     # -Y is the open face of the box. So theta around 3*pi/2 (270 degrees)
@@ -214,8 +223,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
     for i in range(num_lights):
         # Distance [2.1, 2.7]
         l_dist = 2.1 #random.uniform(2.1, 2.7)
-        l_theta = 0 #random.uniform(0, 2*math.pi)
-        l_phi = 0 #random.uniform(0, math.pi/2)
+        l_theta = random.uniform(0, 2*math.pi)
+        l_phi = random.uniform(0, math.pi/6) # control azimuth to be mostly from the top, not too much from the sides to avoid wall/floor blocking. Can increase later for more diversity.
         l_pos = [l_dist * math.cos(l_theta) * math.sin(l_phi), l_dist * math.sin(l_theta) * math.sin(l_phi), l_dist * math.cos(l_phi)]
         
         # Intensity [2500, 5000]
@@ -244,8 +253,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
 
     # fix relative paths for background objects from the template
     for k, v in scene['objects'].items():
-        if v["mesh_path"].startswith("templates/"):
-            v["mesh_path"] = "../../" + v["mesh_path"]
+        if v["mesh_path"].startswith("backgrounds/"):
+            v["mesh_path"] = "../../templates/" + v["mesh_path"]
             
     with open(os.path.join(output_dir, f"scene_{scene_idx:04d}.json"), 'w') as f:
         json.dump(scene, f, indent=4)
@@ -263,11 +272,11 @@ if __name__ == "__main__":
     
     # We will run this script from the renderformer directory
     os.makedirs(output_dir, exist_ok=True)
-    template_json = "datasets/templates/cbox-2-walls.json"
+    template_jsons = [f"datasets/templates/cbox-{i}-walls.json" for i in range(0, 4)]
     
     print("Finding objaverse objects...")
     objaverse_objects = find_objaverse_objects()
-    # objaverse_objects = random.sample(objaverse_objects, 1) # restrict to single obj
+    # objaverse_objects = random.sample(objaverse_objects, 5) # restrict to N objs
     print(f"Found {len(objaverse_objects)} glb files.")
     
     if len(objaverse_objects) == 0:
@@ -275,5 +284,6 @@ if __name__ == "__main__":
         
     print(f"Generating {num_scenes} scenes...")
     for i in range(num_scenes):
+        template_json = random.choice(template_jsons)
         generate_scene(template_json, objaverse_objects, i, output_dir)
     print(f"Done! Generated {num_scenes} JSON scenes in {output_dir}")

@@ -1,3 +1,13 @@
+"""
+This script converts all JSON scene files in a specified input directory to h5 format 
+using the convert_scene.py script,and saves the outputs in a specified output directory. 
+It uses concurrent processing to speed up the conversion of multiple scenes.
+
+Usage:
+    python3 data_generation/convert_all_scene_h5s.py --input_dir <input_dir> --output_dir <output_dir> --num_workers 4
+
+"""
+
 import os
 import glob
 import subprocess

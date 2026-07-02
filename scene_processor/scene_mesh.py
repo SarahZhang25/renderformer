@@ -48,7 +48,8 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
             mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False)  # type: ignore
         if obj_config.transform.normalize:
             mesh = normalize_to_unit_sphere(mesh)
-        if obj_config.remesh:
+        # Remesh if existing is greater than target number
+        if obj_config.remesh and mesh.faces.shape[0] > obj_config.remesh_target_face_num:
             new_v, new_f = remesh(mesh.vertices, mesh.faces, obj_config.remesh_target_face_num)
             print(f'remesh {obj_key} from {mesh.faces.shape[0]} to {new_f.shape[0]}')
             mesh = trimesh.Trimesh(

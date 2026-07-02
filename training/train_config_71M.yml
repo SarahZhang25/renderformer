@@ -50,12 +50,12 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
-  log_dir: "training/logs/ds1_single_obj_ball_cbox3"
-  run_name: "full_ds"
+  data_dir: "datasets/processed_datasets/ds2_chairs1-3_cbox0-3"
+  log_dir: "training/logs/ds2_chairs1-3_cbox0-3"
+  run_name: "full_ds_128x128"
   # max_dataset_size: 10     # If none, will use entire dataset
-  resolution: 256
-  batch_size: 10           # process all cached scenes in one forward pass
+  resolution: 128
+  batch_size: 64           # process all cached scenes in one forward pass
   # val_batch_size: 10       # batch size for validation dataloader. If not defined, will default to same as batch_size
   epochs: 20000
   warmup_epochs: 2000
@@ -64,5 +64,5 @@ training:
   num_workers: 0           # workers for initial cache-fill DataLoader
   use_amp: True            # bf16 autocast on model forward; losses run in fp32
   use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
-  log_viz_interval: 100    # epochs between validation + image logging
+  log_viz_interval: 200    # epochs between validation + image logging
   checkpoint_interval: 1000
