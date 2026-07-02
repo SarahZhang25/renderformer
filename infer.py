@@ -97,8 +97,8 @@ def main():
             ldr_img = np.clip(hdr_img, 0, 1)
         ldr_img = (ldr_img * 255).astype(np.uint8)
 
-        hdr_path = os.path.join(output_dir, f"{base_name}_view_{i}.exr")
-        ldr_path = os.path.join(output_dir, f"{base_name}_view_{i}.png")
+        hdr_path = os.path.join(output_dir, f"{base_name}_view_{i}_res_{args.resolution}.exr")
+        ldr_path = os.path.join(output_dir, f"{base_name}_view_{i}_res_{args.resolution}.png")
 
         imageio.v3.imwrite(hdr_path, hdr_img)
         imageio.v3.imwrite(ldr_path, ldr_img)

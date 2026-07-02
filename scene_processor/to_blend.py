@@ -84,9 +84,13 @@ def scene_to_img(
         bpy.context.scene.render.image_settings.color_mode = 'RGBA'
         bpy.context.scene.render.image_settings.file_format = 'OPEN_EXR'
         
-        bpy.context.preferences.addons["cycles"].preferences.get_devices()
+        cycles_pref = bpy.context.preferences.addons["cycles"].preferences
+        cycles_pref.compute_device_type = BLENDER_BACKEND
+        cycles_pref.get_devices()
+        for device in cycles_pref.devices:
+            if device.type == BLENDER_BACKEND or (BLENDER_BACKEND == 'OPTIX' and device.type == 'CUDA'):
+                device.use = True
         bpy.context.scene.cycles.device = 'GPU'
-        bpy.context.preferences.addons['cycles'].preferences.compute_device_type = BLENDER_BACKEND
         bpy.context.scene.render.threads = 8
         bpy.context.scene.render.threads_mode = 'FIXED'
 
@@ -127,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument('--mesh_path', type=str, 
                        help='Path to mesh file. If not provided, a temporary directory will be used',
                        default=None)
-    parser.add_argument('--dump_blend', default=True, action='store_true', help='Save Blender file after rendering')
+    parser.add_argument('--no_dump_blend', dest='dump_blend', action='store_false', help='Do not save Blender file after rendering')
     parser.add_argument('--save_img', default=False, action='store_true', help='Save rendered images')
     parser.add_argument('--resolution', type=int, default=512, help='Resolution of the rendered images')
     parser.add_argument('--spp', type=int, default=4096, help='Samples per pixel')
@@ -140,6 +144,7 @@ if __name__ == "__main__":
         
     os.makedirs(args.output_dir, exist_ok=True)
     output_base = os.path.join(args.output_dir, os.path.splitext(os.path.basename(args.scene_config))[0])
+    print(f"Output base path: {output_base}")
     
     if args.mesh_path is None:
         print("No mesh path provided, using temporary directory")

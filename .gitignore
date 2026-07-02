@@ -163,10 +163,11 @@ cython_debug/
 .DS_Store
 
 checkpoints/
-*.ipynb
+# *.ipynb
 video-data/
 output/
 tmp/
-datasets/
-data_generation/dataset
+
 renderformer_paper/
+.vscode
+*.log*
