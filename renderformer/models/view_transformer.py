@@ -74,6 +74,12 @@ class ViewTransformer(nn.Module):
             use_swin_attn=self.config.view_transformer_use_swin_attn,
         )
         if not config.use_dpt_decoder:
+            if config.norm_type == 'layer_norm':
+                self.out_norm = nn.LayerNorm(self.config.view_transformer_latent_dim)
+            elif config.norm_type == 'rms_norm':
+                self.out_norm = nn.RMSNorm(self.config.view_transformer_latent_dim)
+            else:
+                self.out_norm = nn.Identity()
             self.out_proj = nn.Linear(self.config.view_transformer_latent_dim, self.config.patch_size * self.config.patch_size * (4 if config.include_alpha else 3))
         else:
             self.out_dpt = DPTHead(
@@ -110,7 +116,7 @@ class ViewTransformer(nn.Module):
         ray_token_pos = camera_o[:, None].repeat(1, n_patches, 3)  # [B, N_PATCHES, 3]
 
         # positional encoding if use 'nerf' pe
-        if self.config.pe_type == 'nerf':
+        if self.config.pe_type == 'nerf':  #NOTE: understand why do both ray and tri token suse the same pos_pe and pe_token_proj?
             ray_tokens = ray_tokens + self.token_pos_pe_norm(self.pe_token_proj(self.pos_pe(ray_token_pos)))
             tri_tokens = tri_tokens + self.token_pos_pe_norm(self.pe_token_proj(self.pos_pe(tri_pos)))
 
@@ -122,6 +128,7 @@ class ViewTransformer(nn.Module):
             return self.out_proj_act(decoded_img)
         else:
             seq = self.transformer(ray_tokens, tri_tokens, src_key_padding_mask=valid_mask, triangle_pos=tri_pos, ray_pos=ray_token_pos, tf32_mode=tf32_mode, patch_h=patch_h, patch_w=patch_w)  # [B, N_PATCHES, D]
+            seq = self.out_norm(seq)
             decoded_patches = self.out_proj_act(self.out_proj(seq))  # [B, N_PATCHES, P*P*3]
             decoded_img = rearrange(decoded_patches, 'b (h1 w1) (c p1 p2) -> b c (h1 p1) (w1 p2)', p1=self.config.patch_size, p2=self.config.patch_size, h1=patch_h, w1=patch_w)
             return decoded_img
