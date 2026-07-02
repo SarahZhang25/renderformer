@@ -167,3 +167,6 @@ checkpoints/
 video-data/
 output/
 tmp/
+datasets/
+data_generation/dataset
+renderformer_paper/
