@@ -54,7 +54,7 @@ def scene_to_img(
                         roughness=material_config.roughness,
                         material_name=f"{obj_key}"
                     )
-                    if material_config.rand_tri_diffuse_seed:  # Use vertex color as diffuse color when have per-triangle diffuse color
+                    if material_config.rand_tri_diffuse_seed is not None or material_config.random_diffuse_type == "procedural":  # Use vertex color as diffuse color when have per-triangle diffuse color
                         bsdf = material.node_tree.nodes["Group"]
                         vcol = material.node_tree.nodes.new(type="ShaderNodeVertexColor")
                         material.node_tree.links.new(vcol.outputs['Color'], bsdf.inputs['Diffuse'])

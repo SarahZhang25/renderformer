@@ -3,7 +3,7 @@
     "version": "1.0",
     "objects": {
         "background_0": {
-            "mesh_path": "backgrounds/plane.obj",
+            "mesh_path": "../../templates/backgrounds/plane.obj",
             "transform": {
                 "translation": [
                     0.0,
@@ -45,7 +45,7 @@
             }
         },
         "light_0": {
-            "mesh_path": "lighting/tri.obj",
+            "mesh_path": "../../templates/lighting/tri.obj",
             "transform": {
                 "translation": [
                     0.0,

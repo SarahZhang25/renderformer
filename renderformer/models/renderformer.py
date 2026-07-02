@@ -37,6 +37,10 @@ class RenderFormer(nn.Module, PyTorchModelHubMixin):
             self.rope_dim = None
         elif self.config.pe_type == 'rope':
             self.rope_dim = self.config.vertex_pe_num_freqs
+            # optional alternative where we clamp rope dim
+            # head_dim = self.config.latent_dim // self.config.num_heads
+            # max_rope_dim = ((head_dim // 2) // 9) * 2
+            # self.rope_dim = min(self.config.vertex_pe_num_freqs, max_rope_dim)
         else:
             raise ValueError(f"Invalid positional encoding type: {self.config.pe_type}")
 

@@ -1,5 +1,5 @@
 """
-python3 data_generation/render_all_scenes.py --input_dir <input_dir> --output_dir <output_dir> --num_workers 4
+python3 data_generation/render_all_scenes.py --input_dir <input_dir> --output_dir <output_dir> --spp 256 --num_workers 4
 """
 
 import os

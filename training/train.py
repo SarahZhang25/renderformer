@@ -20,6 +20,9 @@ from tqdm import tqdm
 
 from lpips import LPIPS
 
+from torchmetrics.image import StructuralSimilarityIndexMeasure
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+
 from dataset import SceneDataset, scene_collate_fn
 
 from renderformer.models.config import RenderFormerConfig
@@ -155,46 +158,27 @@ class Trainer:
             resolution=self.resolution,
             split='train',
             max_dataset_size=self.tc.get('max_dataset_size', None),
+            shuffle=self.tc.get('shuffle_dataset', True),
+            shuffle_seed=self.tc.get('shuffle_seed', 42)
         )
         self.dataset_val = SceneDataset(
             data_dir=self.tc['data_dir'],
             resolution=self.resolution,
             split='val',
             max_dataset_size=self.tc.get('max_dataset_size', None),
+            shuffle=self.tc.get('shuffle_dataset', True),
+            shuffle_seed=self.tc.get('shuffle_seed', 42)
         )
-        # self.dataloader_train = DataLoader(
-        #     self.dataset_train, batch_size=batch_size, shuffle=True
-        # )
-        # self.dataloader_val = DataLoader(
-        #     self.dataset_val, batch_size=val_batch_size, shuffle=False
-        # )
-
-        # ---- Fixed visualization batches (seeded for reproducibility) ----
-        vis_size = min(16, batch_size)
-        self.fixed_train_batch = self._get_seeded_batch(self.dataset_train, vis_size, seed=123)
-        self.fixed_val_batch   = self._get_seeded_batch(self.dataset_val,   vis_size, seed=123)
-
-        # ---- GPU dataset cache ----
-        # Pre-compute all preprocessing (coord-transforms, rays, texture encoding)
-        # for the full train and val sets. For small datasets this eliminates all
-        # per-epoch I/O and CPU compute from the hot path. Each cached item is a
-        # dict of GPU tensors ready to be fed directly to _forward().
         num_workers = self.tc.get('num_workers', 0)
-        print(f"Caching {len(self.dataset_train)} train batches on GPU...")
-        train_loader_for_cache = DataLoader(
+        self.dataloader_train = DataLoader(
             self.dataset_train,
             batch_size=batch_size,
-            shuffle=False,   # order doesn't matter here; we shuffle per-epoch below
+            shuffle=True,
             num_workers=num_workers,
             pin_memory=(num_workers > 0),
             collate_fn=scene_collate_fn,
         )
-        self.cached_train_inputs = [
-            self._preprocess_batch(batch) for batch in train_loader_for_cache
-        ]
-
-        print(f"Caching {len(self.dataset_val)} val batches on GPU...")
-        val_loader_for_cache = DataLoader(
+        self.dataloader_val = DataLoader(
             self.dataset_val,
             batch_size=val_batch_size,
             shuffle=False,
@@ -202,21 +186,26 @@ class Trainer:
             pin_memory=(num_workers > 0),
             collate_fn=scene_collate_fn,
         )
-        self.cached_val_inputs = [
-            self._preprocess_batch(batch) for batch in val_loader_for_cache
-        ]
+
+        # ---- Fixed visualization batches (seeded for reproducibility) ----
+        vis_size = min(16, batch_size)
+        self.fixed_train_batch = self._get_seeded_batch(self.dataset_train, vis_size, seed=456)
+        self.fixed_val_batch   = self._get_seeded_batch(self.dataset_val,   vis_size, seed=123)
 
         # Pre-process the fixed viz batches once too (already on GPU, just derive tensors)
         self.cached_fixed_train_inputs = self._preprocess_batch(self.fixed_train_batch)
         self.cached_fixed_val_inputs   = self._preprocess_batch(self.fixed_val_batch)
 
-        print(f"  Cached {len(self.cached_train_inputs)} train batch(es), "
-              f"{len(self.cached_val_inputs)} val batch(es) on {self.device}.")
+        print(f"Initialized DataLoaders with {num_workers} workers.")
 
         # ---- Optimizer & losses ----
         self.optimizer = AdamW(self.model.parameters(), lr=float(self.tc.get('lr', 1e-4)))
         self.loss_fn   = torch.nn.L1Loss()
         self.lpips_fn  = LPIPS(net='vgg').to(self.device)
+
+        # ---- Metrics ----
+        self.ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(self.device)
+        self.lpips_val_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(self.device)
 
         # ---- LR scheduler: linear warmup → cosine decay ----
         warmup_sched  = LinearLR(self.optimizer, start_factor=0.01, total_iters=self.warmup_epochs)
@@ -276,13 +265,13 @@ class Trainer:
         cfg = self.model_config
         dev = self.device
 
-        triangles = batch['triangles'].to(dev)
-        texture   = batch['texture'].to(dev)
-        mask      = batch['mask'].to(dev)
-        vn        = batch['vn'].to(dev)
-        c2w       = batch['c2w'].to(dev)
-        fov       = batch['fov'].to(dev)
-        gt_img    = batch['gt_img'].to(dev)
+        triangles = batch['triangles'].to(dev, non_blocking=True)
+        texture   = batch['texture'].to(dev, non_blocking=True)
+        mask      = batch['mask'].to(dev, non_blocking=True)
+        vn        = batch['vn'].to(dev, non_blocking=True)
+        c2w       = batch['c2w'].to(dev, non_blocking=True)
+        fov       = batch['fov'].to(dev, non_blocking=True)
+        gt_img    = batch['gt_img'].to(dev, non_blocking=True)
 
         if fov.dim() == 2:
             fov = fov.unsqueeze(-1)
@@ -412,35 +401,43 @@ class Trainer:
     # Train / Val Steps
     # ------------------------------------------------------------------
 
-    def _train_epoch(self) -> tuple[float, float]:
+    def _train_epoch(self) -> tuple[float, float, float, float]:
         """
         Run one full training epoch over the GPU-cached inputs.
         Shuffles the cached list each epoch to preserve stochastic ordering.
-        Returns (avg_loss, avg_psnr).
+        Returns (avg_loss, avg_psnr, avg_ssim, avg_lpips).
         """
         self.model.train()
-        total_loss, total_psnr = 0.0, 0.0
+        total_loss, total_psnr, total_ssim, total_lpips = 0.0, 0.0, 0.0, 0.0
 
-        # for batch in self.dataloader_train:
-        #     inputs = self._preprocess_batch(batch)
-        # Per-epoch shuffle via a random permutation of cached indices
-        indices = torch.randperm(len(self.cached_train_inputs)).tolist()
-        for idx in indices:
-            inputs = self.cached_train_inputs[idx]
+        for batch in self.dataloader_train:
+            inputs = self._preprocess_batch(batch)
             rendered = self._forward(inputs)
-            loss, _, psnr = self._compute_losses(rendered, inputs['gt_img'])
+            loss, linear_rendered, psnr = self._compute_losses(rendered, inputs['gt_img'])
 
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
+            with torch.no_grad():
+                bs, nv = linear_rendered.shape[:2]
+                pred_flat = linear_rendered.reshape(bs * nv, *linear_rendered.shape[2:])
+                gt_flat = inputs['gt_img'].reshape(bs * nv, *inputs['gt_img'].shape[2:])
+                
+                pred_ldr = hdr_to_ldr(pred_flat.clamp(min=0.0), to_uint8_output=False).permute(0, 3, 1, 2)
+                gt_ldr = hdr_to_ldr(gt_flat, to_uint8_output=False).permute(0, 3, 1, 2)
+                
+                ssim_val = self.ssim_metric(pred_ldr, gt_ldr).item()
+                lpips_val = self.lpips_val_metric(pred_ldr, gt_ldr).item()
+
             total_loss += loss.item()
             total_psnr += psnr
+            total_ssim += ssim_val
+            total_lpips += lpips_val
 
-        # n = len(self.dataloader_train)
-        n = len(self.cached_train_inputs)
-        return total_loss / n, total_psnr / n
+        n = len(self.dataloader_train)
+        return total_loss / n, total_psnr / n, total_ssim / n, total_lpips / n
 
     def _validate(self, epoch: int):
         """
@@ -448,25 +445,43 @@ class Trainer:
         Switches the model to eval mode and back before returning.
         """
         self.model.eval()
-        total_loss, total_psnr = 0.0, 0.0
+        total_loss, total_psnr, total_ssim, total_lpips = 0.0, 0.0, 0.0, 0.0
 
         with torch.no_grad():
-            # # --- Full-set metrics ---
-            # for batch in self.dataloader_val:
-            #     inputs = self._preprocess_batch(batch)
-            # --- Full cached validation set metrics ---
-            for inputs in self.cached_val_inputs:
+            # --- Full-set metrics ---
+            for batch in self.dataloader_val:
+                inputs = self._preprocess_batch(batch)
                 rendered = self._forward(inputs)
-                loss, _, psnr = self._compute_losses(rendered, inputs['gt_img'])
+                loss, linear_rendered, psnr = self._compute_losses(rendered, inputs['gt_img'])
+                
+                bs, nv = linear_rendered.shape[:2]
+                pred_flat = linear_rendered.reshape(bs * nv, *linear_rendered.shape[2:])
+                gt_flat = inputs['gt_img'].reshape(bs * nv, *inputs['gt_img'].shape[2:])
+                
+                pred_ldr = hdr_to_ldr(pred_flat.clamp(min=0.0), to_uint8_output=False).permute(0, 3, 1, 2)
+                gt_ldr = hdr_to_ldr(gt_flat, to_uint8_output=False).permute(0, 3, 1, 2)
+                
+                ssim_val = self.ssim_metric(pred_ldr, gt_ldr).item()
+                lpips_val = self.lpips_val_metric(pred_ldr, gt_ldr).item()
+                
                 total_loss += loss.item()
                 total_psnr += psnr
+                total_ssim += ssim_val
+                total_lpips += lpips_val
 
-            n = len(self.cached_val_inputs)
+            n = len(self.dataloader_val)
             avg_val_loss = total_loss / n
             avg_val_psnr = total_psnr / n
+            avg_val_ssim = total_ssim / n
+            avg_val_lpips = total_lpips / n
 
-            self._log_scalars('Val', {'Loss': avg_val_loss, 'PSNR': avg_val_psnr}, epoch)
-            print(f"  Val  Loss: {avg_val_loss:.4f}  PSNR: {avg_val_psnr:.4f}")
+            self._log_scalars('Val', {
+                'Loss': avg_val_loss, 
+                'PSNR': avg_val_psnr,
+                'SSIM': avg_val_ssim,
+                'LPIPS': avg_val_lpips
+            }, epoch)
+            print(f"  Val  Loss: {avg_val_loss:.4f}  PSNR: {avg_val_psnr:.4f}  SSIM: {avg_val_ssim:.4f}  LPIPS: {avg_val_lpips:.4f}")
 
             # --- Visualizations on pre-processed fixed seeded batches ---
             self._log_vis_grid('Train/Rendered_vs_GT', self.cached_fixed_train_inputs, epoch)
@@ -481,18 +496,20 @@ class Trainer:
     def run(self):
         """Execute the full training loop."""
         for epoch in tqdm(range(self.epochs)):
-            avg_train_loss, avg_train_psnr = self._train_epoch()
+            avg_train_loss, avg_train_psnr, avg_train_ssim, avg_train_lpips = self._train_epoch()
 
             self.scheduler.step()
             self._log_scalars('Train', {
                 'LR':   self.optimizer.param_groups[0]['lr'],
                 'Loss': avg_train_loss,
                 'PSNR': avg_train_psnr,
+                'SSIM': avg_train_ssim,
+                'LPIPS': avg_train_lpips,
             }, epoch)
 
             # Validation + visualization
             if (epoch + 1) % self.log_viz_interval == 0:
-                print(f"Epoch {epoch+1}/{self.epochs} - Train Loss: {avg_train_loss:.4f}  PSNR: {avg_train_psnr:.4f}")
+                print(f"Epoch {epoch+1}/{self.epochs} - Train Loss: {avg_train_loss:.4f}  PSNR: {avg_train_psnr:.4f}  SSIM: {avg_train_ssim:.4f}  LPIPS: {avg_train_lpips:.4f}")
                 self._validate(epoch)
 
             # Checkpoint — save new, then delete all older ones

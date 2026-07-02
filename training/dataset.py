@@ -52,14 +52,22 @@ class SceneDataset(Dataset):
         resolution: int = 128,
         max_dataset_size = None,
         split: str = "all",
-        split_proportion: float = 0.9
+        split_proportion: float = 0.9,
+        shuffle: bool = True,
+        shuffle_seed: int = 42
     ):
         self.data_dir = data_dir
         self.resolution = resolution
 
         # Find all completed cases (must have .h5)
-        self.files = glob.glob(os.path.join(data_dir, "*.h5"))
+        # Assumes each scene gets its own h5
+        self.files = glob.glob(os.path.join(data_dir, "scene*.h5"))
         self.files.sort()
+
+        if shuffle:
+            rng = np.random.RandomState(shuffle_seed)
+            rng.shuffle(self.files)
+
         if max_dataset_size is not None and max_dataset_size < len(self.files):
             self.files = self.files[:max_dataset_size]
 
@@ -68,9 +76,6 @@ class SceneDataset(Dataset):
             print(f"[{split}] Using all {len(self.files)} samples in {data_dir}")
         else:
             assert split in ['train', 'val'], "split must be 'train', 'val', or 'all'"
-            rng = np.random.RandomState(42)
-            rng.shuffle(self.files)
-            
             split_idx = int(len(self.files) * split_proportion)
             if split == 'train':
                 self.files = self.files[:split_idx]
