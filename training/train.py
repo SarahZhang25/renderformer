@@ -80,7 +80,7 @@ def hdr_to_ldr(x, exposure=1.0, to_uint8_output=True):
 
 def make_vis_grid(linear_rendered, gt_img, max_images=16, diff_amplify=5.0):
     """
-    Build a side-by-side (pred | GT | diff) visualization grid.
+    Build a side-by-side (GT | pred | diff) visualization grid.
 
     Args:
         linear_rendered: [bs, nv, H, W, C] float32 linear HDR tensor.
@@ -108,7 +108,7 @@ def make_vis_grid(linear_rendered, gt_img, max_images=16, diff_amplify=5.0):
     vis_gt   = to_uint8(gt_ldr).permute(0, 3, 1, 2)
     vis_diff = to_uint8(diff).permute(0, 3, 1, 2)
 
-    vis_img = torch.cat([vis_pred, vis_gt, vis_diff], dim=3)  # [N, C, H, W*3]
+    vis_img = torch.cat([vis_gt, vis_pred, vis_diff], dim=3)  # [N, C, H, W*3]
     grid = torchvision.utils.make_grid(vis_img.float(), nrow=1, normalize=False)
     return grid.byte()
 
@@ -335,7 +335,7 @@ class Trainer:
 
     def _compute_losses(self, rendered_imgs: torch.Tensor, gt_img: torch.Tensor):
         """
-        Compute L1 (in log-HDR space) + LPIPS losses and PSNR.
+        Compute L1 (in log-HDR space) + LPIPS losses and tone-mapped PSNR.
 
         Args:
             rendered_imgs: Raw model output [bs, nv, C, H, W]. May be bf16.
@@ -371,7 +371,9 @@ class Trainer:
         loss = loss_l1 + 0.05 * loss_lpips
 
         with torch.no_grad():
-            mse  = torch.nn.functional.mse_loss(linear_rendered, gt_img)
+            ldr_rendered = hdr_to_ldr(linear_rendered, to_uint8_output=False)
+            ldr_gt = hdr_to_ldr(gt_img, to_uint8_output=False)
+            mse  = torch.nn.functional.mse_loss(ldr_rendered, ldr_gt)
             psnr = -10.0 * torch.log10(mse + 1e-8)
 
         return loss, linear_rendered, psnr.item()

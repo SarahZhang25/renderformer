@@ -3,7 +3,6 @@
 # about 71.8M params
 # --> train at 128x128 resolution
 # new custom generated dataset
-# test run with refactored training run
 
 # Total parameters:        71,771,535
 # Trainable parameters:    71,771,523
@@ -55,11 +54,11 @@ training:
   log_dir: "training/logs/ds1_single_obj_ball_cbox3"
   run_name: "full_ds"
   # max_dataset_size: 10     # If none, will use entire dataset
-  resolution: 128
+  resolution: 256
   batch_size: 10           # process all cached scenes in one forward pass
   # val_batch_size: 10       # batch size for validation dataloader. If not defined, will default to same as batch_size
-  epochs: 10000
-  warmup_epochs: 1000
+  epochs: 20000
+  warmup_epochs: 2000
   lr: 1e-4
   device: "cuda"
   num_workers: 0           # workers for initial cache-fill DataLoader

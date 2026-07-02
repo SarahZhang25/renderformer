@@ -167,6 +167,7 @@ checkpoints/
 video-data/
 output/
 tmp/
+*.log*
 
 renderformer_paper/
 .vscode

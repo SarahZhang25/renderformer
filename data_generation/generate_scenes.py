@@ -24,7 +24,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
     scene['scene_name'] = f"dataset0_scene_{scene_idx}"
     
     # 1 to 3 random objects
-    num_objects = 1 #random.randint(1, 3)
+    num_objects = random.randint(1, 3)
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
     
     placed_bboxes = []
@@ -122,20 +122,30 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
             
         actual_i += 1
         
-        # Material
         # "randomly assign material parameters either per-shading-group or per-triangle with a 1:1 ratio"
-        # fix to per-shading-group for now TODO: change later
-        random_diffuse_type = "per-shading-group" #if random.random() < 0.5 else "per-triangle"
+        # updated to allow procedural patterns as well
+        random_diffuse_type = "procedural" #random.choice(["per-shading-group", "per-triangle", "procedural"])
         # "diffuse albedo with max intensity per color channel set such that sum with monochromatic specular lies between 0.9 and 1.0"
         sum_target = random.uniform(0.9, 1.0)
         specular_val = random.uniform(0.01, 0.5)
         random_diffuse_max = sum_target - specular_val
         specular = [specular_val, specular_val, specular_val]
         
+
+        procedural_pattern, procedural_frequency, procedural_color_a, procedural_color_b = None, None, None, None
+
         if random_diffuse_type == "per-shading-group":
             diffuse = [random.uniform(0, random_diffuse_max) for _ in range(3)]
             random_diffuse_max_val = 0.0
             rand_seed = None
+        elif "procedural" in random_diffuse_type:
+            diffuse = [0.0, 0.0, 0.0]
+            random_diffuse_max_val = random_diffuse_max
+            rand_seed = random.randint(0, 1000000)
+            procedural_pattern = "sinusoidal" #random.choice(["sinusoidal", "checkerboard"]) # "sinusoidal" or "checkerboard"
+            procedural_frequency = [random.uniform(5.0, 20.0) for _ in range(3)]
+            procedural_color_a = [random.uniform(0, random_diffuse_max) for _ in range(3)]
+            procedural_color_b = [random.uniform(0, random_diffuse_max) for _ in range(3)]
         else:
             diffuse = [0.0, 0.0, 0.0]
             random_diffuse_max_val = random_diffuse_max
@@ -164,7 +174,11 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
                 "smooth_shading": smooth_shading,
                 "random_diffuse_max": random_diffuse_max_val,
                 "random_diffuse_type": random_diffuse_type,
-                "rand_tri_diffuse_seed": rand_seed
+                "rand_tri_diffuse_seed": rand_seed,
+                "procedural_pattern": procedural_pattern,
+                "procedural_frequency": procedural_frequency,
+                "procedural_color_a": procedural_color_a,
+                "procedural_color_b": procedural_color_b
             },
             "remesh": True,
             "remesh_target_face_num": 512 #remesh_target
@@ -208,7 +222,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
         intensity = 5000 # random.uniform(2500, 5000)
         
         scene['objects'][f"light_{i}"] = {
-            "mesh_path": "../template_scenes/templates/lighting/tri.obj",
+            "mesh_path": "../../templates/lighting/tri.obj",
             "transform": {
                 "translation": l_pos,
                 "rotation": [0.0, math.degrees(l_phi), math.degrees(l_theta)],
@@ -231,7 +245,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
     # fix relative paths for background objects from the template
     for k, v in scene['objects'].items():
         if v["mesh_path"].startswith("templates/"):
-            v["mesh_path"] = "../template_scenes/" + v["mesh_path"]
+            v["mesh_path"] = "../../" + v["mesh_path"]
             
     with open(os.path.join(output_dir, f"scene_{scene_idx:04d}.json"), 'w') as f:
         json.dump(scene, f, indent=4)
@@ -240,7 +254,7 @@ if __name__ == "__main__":
     ## set n_scenes as args
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_scenes", type=int, default=1)
-    parser.add_argument("--output_dir", type=str, default="data_generation/dataset")
+    parser.add_argument("--output_dir", type=str, default="datasets/json_scenes/new_dataset")
     args = parser.parse_args()
     num_scenes = args.num_scenes
     output_dir = args.output_dir
@@ -249,11 +263,11 @@ if __name__ == "__main__":
     
     # We will run this script from the renderformer directory
     os.makedirs(output_dir, exist_ok=True)
-    template_json = "data_generation/template_scenes/cbox-3-walls.json"
+    template_json = "datasets/templates/cbox-2-walls.json"
     
     print("Finding objaverse objects...")
     objaverse_objects = find_objaverse_objects()
-    objaverse_objects = random.sample(objaverse_objects, 1) # restrict to single obj
+    # objaverse_objects = random.sample(objaverse_objects, 1) # restrict to single obj
     print(f"Found {len(objaverse_objects)} glb files.")
     
     if len(objaverse_objects) == 0:

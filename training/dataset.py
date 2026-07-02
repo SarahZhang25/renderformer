@@ -60,7 +60,8 @@ class SceneDataset(Dataset):
         self.resolution = resolution
 
         # Find all completed cases (must have .h5)
-        self.files = glob.glob(os.path.join(data_dir, "*.h5"))
+        # Assumes each scene gets its own h5
+        self.files = glob.glob(os.path.join(data_dir, "scene*.h5"))
         self.files.sort()
 
         if shuffle:

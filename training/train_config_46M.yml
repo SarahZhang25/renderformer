@@ -1,15 +1,15 @@
 # Training Notes
 # smallest version using 384d tokens / 8 + 4 layers like from paper
-# about 45M params
-# --> train at 128x128 resolution
-# new custom generated dataset
-# test run with refactored training run
+# about 46M params
+# Total parameters:        45,963,531
+# Trainable parameters:    45,963,523
+# Transformer params:      18,886,660
+# View Transformer params: 21,925,895
+# 	Out DPT params:          10,042,243
 
-# Total parameters:        45,358,350
-# Trainable parameters:    45,358,339
-# Transformer params:      18,886,662
-# View Transformer params: 21,925,896
-#         Out DPT params:          10,042,243
+
+# --> train at 128x128 resolution
+# use ds1_single_obj_ball_cbox3: 10 item dataset
 
 model:
   latent_dim: 384 # reduced
@@ -27,11 +27,11 @@ model:
   pe_type: rope
   rope_type: triangle
   rope_double_max_freq: False
-  vertex_pe_num_freqs: 12
+  vertex_pe_num_freqs: 8
   use_vn_encoder: True
-  vn_pe_num_freqs: 6
+  vn_pe_num_freqs: 4
   vn_encoder_norm_type: rms_norm
-  texture_encode_patch_size: 30
+  texture_encode_patch_size: 32
   texture_channels: 13
   texture_encoder_norm_type: rms_norm
   view_transformer_latent_dim: 384 # reduced
@@ -51,21 +51,20 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "data_generation/datasets/ds1_single_obj_ball_cbox3"
+  data_dir: "datasets/processed_datasets/ds1_single_obj_ball_cbox3"
   log_dir: "training/logs/ds1_single_obj_ball_cbox3"
-  run_name: "full_ds"
+  run_name: "full_ds_params46M_res128x128"
   # max_dataset_size: 10     # If none, will use entire dataset
   resolution: 128
   batch_size: 10           # process all cached scenes in one forward pass
   # val_batch_size: 10       # batch size for validation dataloader. If not defined, will default to same as batch_size
-  epochs: 10000
-  warmup_epochs: 1000
+  epochs: 20000
+  warmup_epochs: 2000
   lr: 1e-4
   device: "cuda"
   num_workers: 0           # workers for initial cache-fill DataLoader
   use_amp: True            # bf16 autocast on model forward; losses run in fp32
   use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
-  log_viz_interval: 100    # epochs between validation + image logging
+  log_viz_interval: 200    # epochs between validation + image logging
   checkpoint_interval: 1000
-
 
