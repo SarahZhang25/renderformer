@@ -2,7 +2,8 @@
 Generate json scenes.
 
 Example usage:
-    python data_generation/generate_scenes.py --num_scenes 10 --output_dir datasets/json_scenes/cbox3_ten_objs
+    python data_generation/generate_scenes.py --num_scenes 10 --num_views 4 --transform_scenes \
+        --output_dir datasets/json_scenes/test_scenes
 """
 
 import os
@@ -25,9 +26,26 @@ def find_objaverse_objects():
                 glb_files.append(os.path.join(root, f))
     return glb_files
 
-def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4):
+def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False):
     with open(template_json, 'r') as f:
         scene = json.load(f)
+        
+    # Randomize walls (0 to 3 walls kept)
+    num_walls_to_keep = random.randint(0, 3)
+    wall_keys = ["background_1", "background_2", "background_3"] # wall0, wall1, wall2
+    walls_to_remove = random.sample(wall_keys, 3 - num_walls_to_keep)
+    for k in walls_to_remove:
+        if k in scene.get('objects', {}):
+            del scene['objects'][k]
+
+    # Wall color randomization biased towards neutral colors
+    for obj_key, obj_info in scene.get('objects', {}).items():
+        if "backgrounds" in obj_info.get("mesh_path", ""):
+            base_lightness = random.uniform(0.4, 0.75)
+            variance = random.uniform(0.0, 0.15)
+            color = [max(0.1, min(0.9, base_lightness + random.uniform(-variance, variance))) for _ in range(3)]
+            if "material" in obj_info:
+                obj_info["material"]["diffuse"] = color
         
     # Pre-load template walls/backgrounds for camera occlusion checking
     template_meshes = []
@@ -276,15 +294,23 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         del scene['objects'][k]
         
     num_lights = random.randint(1, 8)
+    # Set total intensity and randomly weight individual light ocntributions
+    base_total_intensity = random.uniform(2500, 5000)
+    S_g = random.uniform(0.5, 2.0) if transform_scene else 1.0
+    
+    weights = [random.uniform(0.5, 1.5) for _ in range(num_lights)]
+    sum_weights = sum(weights)
+    normalized_weights = [w / sum_weights for w in weights]
+    
     for i in range(num_lights):
         # Distance [2.1, 2.7]
         l_dist = random.uniform(2.1, 2.7)
         l_theta = random.uniform(0, 2*math.pi)
-        l_phi = random.uniform(0, math.pi/6) # control azimuth to be mostly from the top, not too much from the sides to avoid wall/floor blocking. Can increase later for more diversity.
+        l_phi = random.uniform(0, math.pi/4) # control azimuth to be mostly from the top, not too much from the sides to avoid wall/floor blocking. Can increase later for more diversity.
         l_pos = [l_dist * math.cos(l_theta) * math.sin(l_phi), l_dist * math.sin(l_theta) * math.sin(l_phi), l_dist * math.cos(l_phi)]
         
-        # Intensity [2500, 5000]
-        intensity = random.uniform(2500, 5000)
+        # Compensated intensity
+        intensity = base_total_intensity * (S_g ** 2) * normalized_weights[i]
         
         scene['objects'][f"light_{i}"] = {
             "mesh_path": "../../templates/lighting/tri.obj",
@@ -311,7 +337,72 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     for k, v in scene['objects'].items():
         if v["mesh_path"].startswith("backgrounds/"):
             v["mesh_path"] = "../../templates/" + v["mesh_path"]
+    
+    # Apply random global transformation
+    # Translation T_g: [-1, 1] for X, Y, Z axes
+    # Scale S_g: [0.5, 2.0] (defined above)
+    # Rotation R_g: [0, 360] for X, Y, Z axes
+    if transform_scene:
+        T_g = [random.uniform(-1.0, 1.0) for _ in range(3)]
+        R_g_angles = [random.uniform(0, 360) for _ in range(3)]
+        
+        R_g = np.eye(4)
+        for axis, angle in enumerate(R_g_angles):
+            axis_array = np.array([1, 0, 0] if axis == 0 else [0, 1, 0] if axis == 1 else [0, 0, 1]).astype(float)
+            R_g = np.dot(trimesh.transformations.rotation_matrix(np.deg2rad(angle), axis_array), R_g)
             
+        for obj_key, obj_info in scene.get('objects', {}).items():
+            transform = obj_info.get("transform", {})
+            scale_old = np.array(transform.get("scale", [1.0, 1.0, 1.0]))
+            rotation_old_angles = transform.get("rotation", [0.0, 0.0, 0.0])
+            translation_old = np.array(transform.get("translation", [0.0, 0.0, 0.0]))
+            
+            # Since local object scales are uniform, the new scale is just multiplied by global scale
+            scale_new = scale_old * S_g
+            
+            # Compose local and global rotations: R_new = R_global * R_local
+            R_l = np.eye(4)
+            for axis, angle in enumerate(rotation_old_angles):
+                axis_array = np.array([1, 0, 0] if axis == 0 else [0, 1, 0] if axis == 1 else [0, 0, 1]).astype(float)
+                R_l = np.dot(trimesh.transformations.rotation_matrix(np.deg2rad(angle), axis_array), R_l)
+            R_new = np.dot(R_g, R_l)
+            
+            # Extract new euler angles to save back to JSON (using static xyz axes to match scene_mesh.py convention)
+            angles_new = trimesh.transformations.euler_from_matrix(R_new, axes='sxyz')
+            rotation_new = [np.rad2deg(a) for a in angles_new]
+            
+            # Compute new translation: T_new = T_global + S_global * R_global * T_local
+            T_old_hom = np.array([translation_old[0], translation_old[1], translation_old[2], 1.0])
+            T_rotated = np.dot(R_g, T_old_hom)[:3]
+            translation_new = np.array(T_g) + S_g * T_rotated
+            
+            obj_info["transform"] = {
+                "translation": translation_new.tolist(),
+                "rotation": rotation_new,
+                "scale": scale_new.tolist(),
+                "normalize": transform.get("normalize", False)
+            }
+            
+        # Apply transformation to all camera positions, look_at points, and up vectors
+        for cam in scene.get('cameras', []):
+            pos_old = np.array(cam["position"])
+            look_old = np.array(cam["look_at"])
+            up_old = np.array(cam.get("up", [0.0, 0.0, 1.0]))
+            
+            pos_rotated = np.dot(R_g, np.append(pos_old, 1.0))[:3]
+            pos_new = np.array(T_g) + S_g * pos_rotated
+            
+            look_rotated = np.dot(R_g, np.append(look_old, 1.0))[:3]
+            look_new = np.array(T_g) + S_g * look_rotated
+            
+            # The up vector is a direction, so it only gets rotated (w=0), not translated or scaled
+            up_rotated = np.dot(R_g, np.append(up_old, 0.0))[:3]
+            up_new = up_rotated / np.linalg.norm(up_rotated)
+            
+            cam["position"] = pos_new.tolist()
+            cam["look_at"] = look_new.tolist()
+            cam["up"] = up_new.tolist()
+
     with open(os.path.join(output_dir, f"scene_{scene_idx:04d}.json"), 'w') as f:
         json.dump(scene, f, indent=4)
 
@@ -321,15 +412,16 @@ if __name__ == "__main__":
     parser.add_argument("--num_scenes", type=int, default=1)
     parser.add_argument("--output_dir", type=str, default="datasets/json_scenes/new_dataset")
     parser.add_argument("--num_views", type=int, default=4)
+    parser.add_argument("--transform_scenes", action="store_true", help="Apply random global transformation")
     args = parser.parse_args()
     num_scenes = args.num_scenes
     output_dir = args.output_dir
 
-    random.seed(42) # fix seed
+    random.seed(123) # fix seed
     
     # We will run this script from the renderformer directory
     os.makedirs(output_dir, exist_ok=True)
-    template_jsons = [f"datasets/templates/cbox-{i}-walls.json" for i in range(0, 4)]
+    template_json = "datasets/templates/cbox-3-walls.json"
     
     print("Finding objaverse objects...")
     objaverse_objects = find_objaverse_objects()
@@ -341,6 +433,5 @@ if __name__ == "__main__":
         
     print(f"Generating {num_scenes} scenes...")
     for i in range(num_scenes):
-        template_json = random.choice(template_jsons)
-        generate_scene(template_json, objaverse_objects, i, output_dir, num_views=args.num_views)
+        generate_scene(template_json, objaverse_objects, i, output_dir, num_views=args.num_views, transform_scene=args.transform_scenes)
     print(f"Done! Generated {num_scenes} JSON scenes in {output_dir}")
