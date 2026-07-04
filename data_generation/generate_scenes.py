@@ -3,7 +3,6 @@ Generate json scenes.
 
 Example usage:
     python data_generation/generate_scenes.py --num_scenes 10 --output_dir datasets/json_scenes/cbox3_ten_objs
-
 """
 
 import os
@@ -26,11 +25,41 @@ def find_objaverse_objects():
                 glb_files.append(os.path.join(root, f))
     return glb_files
 
-def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
+def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4):
     with open(template_json, 'r') as f:
         scene = json.load(f)
         
-    scene['scene_name'] = f"dataset0_scene_{scene_idx}"
+    # Pre-load template walls/backgrounds for camera occlusion checking
+    template_meshes = []
+    for obj_key, obj_info in scene.get('objects', {}).items():
+        if "mesh_path" in obj_info and "backgrounds/" in obj_info["mesh_path"]:
+            # The mesh path might be relative to template or elsewhere. 
+            # We know it's in datasets/templates/backgrounds.
+            mesh_basename = os.path.basename(obj_info["mesh_path"])
+            actual_mesh_path = os.path.join("datasets/templates/backgrounds", mesh_basename)
+            if os.path.exists(actual_mesh_path):
+                mesh = trimesh.load(actual_mesh_path, process=False, force='mesh')
+                # apply transform
+                transform = obj_info.get("transform", {})
+                scale = transform.get("scale", [1.0, 1.0, 1.0])
+                rotation = transform.get("rotation", [0.0, 0.0, 0.0])
+                translation = transform.get("translation", [0.0, 0.0, 0.0])
+                
+                for axis, angle in enumerate(rotation):
+                    axis_array = np.array([1, 0, 0] if axis == 0 else [0, 1, 0] if axis == 1 else [0, 0, 1]).astype(float)
+                    rotation_matrix = trimesh.transformations.rotation_matrix(np.deg2rad(angle), axis_array)
+                    mesh.apply_transform(rotation_matrix)
+                mesh.apply_scale(scale)
+                mesh.apply_translation(translation)
+                template_meshes.append(mesh)
+    
+    if template_meshes:
+        scene_walls = trimesh.util.concatenate(template_meshes)
+    else:
+        scene_walls = None
+
+        
+    scene['scene_name'] = f"scene_{scene_idx}"
     
     # 1 to 3 random objects
     num_objects = random.randint(1, 3)
@@ -133,7 +162,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
         
         # "randomly assign material parameters either per-shading-group or per-triangle with a 1:1 ratio"
         # updated to allow procedural patterns as well
-        random_diffuse_type = "procedural" #random.choice(["per-shading-group", "per-triangle", "procedural"])
+        random_diffuse_type = random.choice(["per-shading-group", "procedural"]) # "per-triangle", 
         # "diffuse albedo with max intensity per color channel set such that sum with monochromatic specular lies between 0.9 and 1.0"
         sum_target = random.uniform(0.9, 1.0)
         specular_val = random.uniform(0.01, 0.5)
@@ -194,41 +223,68 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir):
         }
         
     # Camera
-    # FOV uniformly sampled [30, 60]
-    fov = random.uniform(30.0, 60.0)
-    # Distance uniformly sampled between 1.5 and 2.0 units 
-    dist = random.uniform(1.5, 2.0)
-    # angle
-    # To avoid being blocked by the back/side walls or floor, place the camera in the front-top area
-    # -Y is the open face of the box. So theta around 3*pi/2 (270 degrees)
-    theta = random.uniform(1.25 * math.pi, 1.75 * math.pi)
-    # phi from 60 to 90 degrees (pi/3 to pi/2) so it's slightly above or level, not below floor
-    phi = random.uniform(math.pi / 3, math.pi / 2)
-    cam_pos = [dist * math.cos(theta) * math.sin(phi), dist * math.sin(theta) * math.sin(phi), dist * math.cos(phi)]
-    look_at = [random.uniform(-0.2, 0.2) for _ in range(3)]
-    
-    scene['cameras'] = [{
-        "position": cam_pos,
-        "look_at": look_at,
-        "up": [0.0, 0.0, 1.0],
-        "fov": fov
-    }]
+    scene['cameras'] = []
+    for _ in range(num_views):
+        placed_camera = False
+        for _ in range(100): # max retries for unoccluded camera
+            # FOV uniformly sampled [30, 60]
+            fov = random.uniform(30.0, 60.0)
+            # Distance uniformly sampled between 1.5 and 2.0 units 
+            dist = random.uniform(1.5, 2.0)
+            # angle
+            theta = random.uniform(0, 2 * math.pi)
+            phi = random.uniform(math.pi / 6, math.pi / 2.5) # mostly from above, but not straight top
+            cam_pos = [dist * math.cos(theta) * math.sin(phi), dist * math.sin(theta) * math.sin(phi), dist * math.cos(phi)]
+            look_at = [random.uniform(-0.2, 0.2) for _ in range(3)]
+            
+            occluded = False
+            if scene_walls is not None:
+                ray_origins = np.array([cam_pos])
+                ray_directions = np.array([np.array(look_at) - np.array(cam_pos)])
+                # Normalize direction
+                ray_directions = ray_directions / np.linalg.norm(ray_directions, axis=1, keepdims=True)
+                
+                # Check intersection
+                intersections = scene_walls.ray.intersects_any(ray_origins, ray_directions)
+                if intersections[0]:
+                    occluded = True
+            
+            if not occluded:
+                scene['cameras'].append({
+                    "position": cam_pos,
+                    "look_at": look_at,
+                    "up": [0.0, 0.0, 1.0],
+                    "fov": fov
+                })
+                placed_camera = True
+                break
+        
+        if not placed_camera:
+            print(f"Warning: Could not place an unoccluded camera in scene {scene_idx}")
+            # just use the last generated one
+            scene['cameras'].append({
+                "position": cam_pos,
+                "look_at": look_at,
+                "up": [0.0, 0.0, 1.0],
+                "fov": fov
+            })
+
     
     # Lighting (1 to 8 light sources)
     keys_to_delete = [k for k in scene['objects'].keys() if k.startswith('light_')]
     for k in keys_to_delete:
         del scene['objects'][k]
         
-    num_lights = random.randint(1, 1)# 8)
+    num_lights = random.randint(1, 8)
     for i in range(num_lights):
         # Distance [2.1, 2.7]
-        l_dist = 2.1 #random.uniform(2.1, 2.7)
+        l_dist = random.uniform(2.1, 2.7)
         l_theta = random.uniform(0, 2*math.pi)
         l_phi = random.uniform(0, math.pi/6) # control azimuth to be mostly from the top, not too much from the sides to avoid wall/floor blocking. Can increase later for more diversity.
         l_pos = [l_dist * math.cos(l_theta) * math.sin(l_phi), l_dist * math.sin(l_theta) * math.sin(l_phi), l_dist * math.cos(l_phi)]
         
         # Intensity [2500, 5000]
-        intensity = 5000 # random.uniform(2500, 5000)
+        intensity = random.uniform(2500, 5000)
         
         scene['objects'][f"light_{i}"] = {
             "mesh_path": "../../templates/lighting/tri.obj",
@@ -264,6 +320,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_scenes", type=int, default=1)
     parser.add_argument("--output_dir", type=str, default="datasets/json_scenes/new_dataset")
+    parser.add_argument("--num_views", type=int, default=4)
     args = parser.parse_args()
     num_scenes = args.num_scenes
     output_dir = args.output_dir
@@ -285,5 +342,5 @@ if __name__ == "__main__":
     print(f"Generating {num_scenes} scenes...")
     for i in range(num_scenes):
         template_json = random.choice(template_jsons)
-        generate_scene(template_json, objaverse_objects, i, output_dir)
+        generate_scene(template_json, objaverse_objects, i, output_dir, num_views=args.num_views)
     print(f"Done! Generated {num_scenes} JSON scenes in {output_dir}")
