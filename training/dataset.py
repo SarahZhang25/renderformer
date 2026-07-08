@@ -187,3 +187,97 @@ class SingleSceneDataset(Dataset):
             'fov': self.fov,
             'gt_img': gt_img
         }
+
+class H5SceneDataset(Dataset):
+    """
+    Dataloader for the chunked RF-format HDF5 datasets.
+    Supports single-writer-multiple-reader (SWMR) for efficient multiprocess loading.
+    Embeds the target HDR images directly inside the H5, avoiding separate disk reads.
+    """
+    def __init__(
+        self,
+        data_dir: str,
+        resolution: int = 128,
+        max_dataset_size = None,
+        split: str = "all",
+        split_proportion: float = 0.9,
+        shuffle: bool = True,
+        shuffle_seed: int = 42
+    ):
+        self.data_dir = data_dir
+        self.resolution = resolution
+        
+        # Glob all rf-formatted chunk files
+        self.chunk_files = sorted(glob.glob(os.path.join(data_dir, "rf_dataset_chunk_*.h5")))
+        
+        self.scene_index = []
+        # Build index mapping global_idx -> (chunk_file, scene_name)
+        for chunk_file in self.chunk_files:
+            with h5py.File(chunk_file, 'r') as f:
+                for scene_name in f.keys():
+                    self.scene_index.append((chunk_file, scene_name))
+        
+        if shuffle:
+            rng = np.random.RandomState(shuffle_seed)
+            # Shuffle the index safely
+            rng.shuffle(self.scene_index)
+
+        if max_dataset_size is not None and max_dataset_size < len(self.scene_index):
+            self.scene_index = self.scene_index[:max_dataset_size]
+
+        if split == "all":
+            print(f"[{split}] Using all {len(self.scene_index)} samples in {data_dir}")
+        else:
+            assert split in ['train', 'val'], "split must be 'train', 'val', or 'all'"
+            split_idx = int(len(self.scene_index) * split_proportion)
+            if split == 'train':
+                self.scene_index = self.scene_index[:split_idx]
+            else:
+                self.scene_index = self.scene_index[split_idx:]
+                
+        print(f"[{split}] Found {len(self.scene_index)} samples across {len(self.chunk_files)} chunks in {data_dir}")
+
+        # Lazily store opened H5 handles per worker to avoid multiprocess fork issues
+        self._h5_handles = {}
+
+    def _get_h5_file(self, chunk_path):
+        if chunk_path not in self._h5_handles:
+            # swmr=True enables Single Writer Multiple Reader, safe for multiprocess dataloading
+            self._h5_handles[chunk_path] = h5py.File(chunk_path, 'r', swmr=True)
+        return self._h5_handles[chunk_path]
+
+    def __len__(self):
+        return len(self.scene_index)
+
+    def __getitem__(self, idx):
+        chunk_file, scene_name = self.scene_index[idx]
+        f = self._get_h5_file(chunk_file)
+        grp = f[scene_name]
+        
+        triangles = torch.from_numpy(np.array(grp['triangles'])).float()
+        texture = torch.from_numpy(np.array(grp['texture'])).float()
+        vn = torch.from_numpy(np.array(grp['vn'])).float()
+        c2w = torch.from_numpy(np.array(grp['c2w'])).float()
+        fov = torch.from_numpy(np.array(grp['fov'])).float()
+        mask = torch.ones(triangles.shape[0], dtype=torch.bool)
+        
+        # Load embedded HDR image directly from HDF5
+        gt_img = torch.from_numpy(grp['hdr_target_image'][:]).float()
+        
+        # Resize if necessary
+        if gt_img.shape[1] != self.resolution:
+            # Permute to shape expected by interpolate: [N, C, H, W] (where N = num_views)
+            gt_img = gt_img.permute(0, 3, 1, 2) 
+            gt_img = torch.nn.functional.interpolate(gt_img, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False)
+            # Permute back to shape: [num_views, H, W, C]
+            gt_img = gt_img.permute(0, 2, 3, 1)
+
+        return {
+            'triangles': triangles,
+            'texture': texture,
+            'mask': mask,
+            'vn': vn,
+            'c2w': c2w,
+            'fov': fov,
+            'gt_img': gt_img
+        }

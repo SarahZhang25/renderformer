@@ -5,8 +5,12 @@ import trimesh
 import trimesh.visual
 from typing import Dict
 import random
-from scene_config import SceneConfig, MaterialConfig
-from remesh import remesh
+try:
+    from scene_config import SceneConfig, MaterialConfig
+    from remesh import remesh
+except ImportError:
+    from renderformer.scene_processor.scene_config import SceneConfig, MaterialConfig
+    from renderformer.scene_processor.remesh import remesh
 
 def get_procedural_color(vertices: np.ndarray, config: MaterialConfig) -> np.ndarray:
     pattern = config.procedural_pattern
@@ -42,10 +46,24 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
     os.makedirs(split_mesh_folder_path, exist_ok=True)
 
     for obj_key, obj_config in scene_config.objects.items():
-        if obj_config.mesh_path.endswith(".glb") or ("shapenet" in obj_config.mesh_path.lower()):
-            mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False, force='mesh')  # type: ignore
+        # if obj_config.mesh_path.endswith(".glb") or ("shapenet" in obj_config.mesh_path.lower()):
+        #     mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False, force='mesh')  # type: ignore
+        # else:
+        #     mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False)  # type: ignore
+
+        mesh_path = obj_config.mesh_path
+        if os.path.isabs(mesh_path):
+            final_mesh_path = mesh_path
+        elif mesh_path.startswith('~'):
+            final_mesh_path = os.path.expanduser(mesh_path)
         else:
-            mesh: trimesh.Trimesh = trimesh.load(scene_config_dir + '/' + obj_config.mesh_path, process=False)  # type: ignore
+            final_mesh_path = os.path.normpath(os.path.join(scene_config_dir, mesh_path))
+            
+        kwargs = {'process': False}
+        if mesh_path.endswith('.glb') or ('shapenet' in mesh_path.lower()):
+            kwargs['force'] = 'mesh'
+            
+        mesh: trimesh.Trimesh = trimesh.load(final_mesh_path, **kwargs)
         if obj_config.transform.normalize:
             mesh = normalize_to_unit_sphere(mesh)
         # Remesh if existing is greater than target number

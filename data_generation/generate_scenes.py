@@ -27,6 +27,33 @@ def find_objaverse_objects():
     return glb_files
 
 def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False):
+    """
+    Generate a single randomized scene JSON from a template and a pool of Objaverse objects.
+
+    Randomization includes wall selection and color, object placement (with collision
+    avoidance), material properties, camera placement (with occlusion checking against
+    walls), and lighting. Optionally applies a random global rigid-body transformation
+    (translation, rotation, scale) to the entire scene.
+
+    Args:
+        template_json (str): Path to the base scene JSON template. The directory
+            containing this file is used to resolve relative mesh paths for
+            backgrounds and lighting assets.
+        objaverse_objects (list[str]): List of absolute paths to candidate .glb
+            mesh files to randomly sample objects from.
+        scene_idx (int): Integer index used to name the output file
+            (e.g., ``scene_0042.json``) and the ``scene_name`` field in the JSON.
+        output_dir (str): Directory where the generated scene JSON will be written.
+        num_views (int, optional): Number of camera views to generate per scene.
+            Defaults to 4.
+        transform_scene (bool, optional): If True, applies a random global
+            transformation (translation in [-1, 1], scale in [0.5, 2.0], full
+            rotation) to all objects and cameras. Defaults to False.
+
+    Returns:
+        None. Writes a file named ``scene_{scene_idx:04d}.json`` to ``output_dir``.
+    """
+    template_dir = os.path.dirname(os.path.abspath(template_json))
     with open(template_json, 'r') as f:
         scene = json.load(f)
         
@@ -47,16 +74,24 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             if "material" in obj_info:
                 obj_info["material"]["diffuse"] = color
         
-    # Pre-load template walls/backgrounds for camera occlusion checking
+    # Pre-load template walls/backgrounds for camera occlusion checking.
+    # We load the mesh directly from the mesh_path in the JSON (which should be absolute).
     template_meshes = []
     for obj_key, obj_info in scene.get('objects', {}).items():
         if "mesh_path" in obj_info and "backgrounds/" in obj_info["mesh_path"]:
-            # The mesh path might be relative to template or elsewhere. 
-            # We know it's in datasets/templates/backgrounds.
-            mesh_basename = os.path.basename(obj_info["mesh_path"])
-            actual_mesh_path = os.path.join("datasets/templates/backgrounds", mesh_basename)
+            mesh_path = obj_info["mesh_path"]
+            
+            # Resolve the path: use as-is if absolute, otherwise join with known template dir
+            if os.path.isabs(mesh_path):
+                actual_mesh_path = mesh_path
+            else:
+                # Fallback for old-style relative paths
+                actual_mesh_path = os.path.join(
+                    os.path.dirname(template_json), "backgrounds", os.path.basename(mesh_path)
+                )
+            
             if os.path.exists(actual_mesh_path):
-                mesh = trimesh.load(actual_mesh_path, process=False, force='mesh')
+                mesh = trimesh.load(actual_mesh_path, process=False)
                 # apply transform
                 transform = obj_info.get("transform", {})
                 scale = transform.get("scale", [1.0, 1.0, 1.0])
@@ -70,6 +105,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
                 mesh.apply_scale(scale)
                 mesh.apply_translation(translation)
                 template_meshes.append(mesh)
+            else:
+                print(f"  Warning: Could not load wall mesh for occlusion check: {actual_mesh_path}")
     
     if template_meshes:
         scene_walls = trimesh.util.concatenate(template_meshes)
@@ -79,8 +116,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         
     scene['scene_name'] = f"scene_{scene_idx}"
     
-    # 1 to 3 random objects
-    num_objects = random.randint(1, 3)
+    # 1 to 15 random objects
+    num_objects = random.randint(1, 15)
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
     
     placed_bboxes = []
@@ -89,8 +126,10 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     for obj_path in selected_objects:
         obj_key = f"objaverse_{actual_i}"
         
-        # calculate relative path for mesh_path to avoid the prepended scene_config_dir issue
-        rel_path = os.path.relpath(obj_path, output_dir)
+        # # calculate relative path for mesh_path to avoid the prepended scene_config_dir issue
+        # rel_path = os.path.relpath(obj_path, output_dir)
+        # Use absolute path for objaverse objects
+        abs_path = os.path.abspath(obj_path)
         
         # Scale and rotation
         scale_val = random.uniform(0.3, 0.7)
@@ -215,7 +254,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         # remesh_target = random.randint(256, 3072) # TODO: this needs to be strategic to only apply for too high face count
         
         scene['objects'][obj_key] = {
-            "mesh_path": rel_path,
+            # "mesh_path": rel_path,
+            "mesh_path": abs_path,
             "transform": {
                 "translation": translation,
                 "rotation": rotation,
@@ -257,15 +297,28 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             
             occluded = False
             if scene_walls is not None:
-                ray_origins = np.array([cam_pos])
-                ray_directions = np.array([np.array(look_at) - np.array(cam_pos)])
-                # Normalize direction
-                ray_directions = ray_directions / np.linalg.norm(ray_directions, axis=1, keepdims=True)
+                # Check line of sight from camera to the center of the floor (0, 0, -0.5).
+                # The floor is plane.obj scaled by 0.5, sitting at Z = -0.5.
+                floor_center = np.array([0.0, 0.0, -0.5])
+                cam_pos_np = np.array(cam_pos)
                 
-                # Check intersection
-                intersections = scene_walls.ray.intersects_any(ray_origins, ray_directions)
-                if intersections[0]:
-                    occluded = True
+                ray_origins = cam_pos_np.reshape(1, 3)
+                ray_dir = floor_center - cam_pos_np
+                dist_to_floor = np.linalg.norm(ray_dir)
+                ray_dir_normalized = (ray_dir / dist_to_floor).reshape(1, 3)
+                
+                # Get actual intersection locations so we can check distances
+                locations, index_ray, index_tri = scene_walls.ray.intersects_location(
+                    ray_origins, ray_dir_normalized
+                )
+                
+                if len(locations) > 0:
+                    # Compute distance from camera to each intersection point
+                    hit_distances = np.linalg.norm(locations - cam_pos_np, axis=1)
+                    # A wall is blocking if any intersection is closer than the floor center
+                    # (small epsilon to avoid self-intersection with the floor plane itself)
+                    if np.any(hit_distances < dist_to_floor - 0.05):
+                        occluded = True
             
             if not occluded:
                 scene['cameras'].append({
@@ -313,7 +366,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         intensity = base_total_intensity * (S_g ** 2) * normalized_weights[i]
         
         scene['objects'][f"light_{i}"] = {
-            "mesh_path": "../../templates/lighting/tri.obj",
+            # "mesh_path": "../../templates/lighting/tri.obj",            
+            "mesh_path": os.path.join(template_dir, "lighting", "tri.obj"),
             "transform": {
                 "translation": l_pos,
                 "rotation": [0.0, math.degrees(l_phi), math.degrees(l_theta)],
@@ -333,10 +387,11 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             "remesh": False
         }
 
-    # fix relative paths for background objects from the template
+    # fix relative paths for background objects from the template (if template isn't already using absolute paths)
     for k, v in scene['objects'].items():
         if v["mesh_path"].startswith("backgrounds/"):
-            v["mesh_path"] = "../../templates/" + v["mesh_path"]
+            # v["mesh_path"] = "../../templates/" + v["mesh_path"]
+            v["mesh_path"] = os.path.join(template_dir, v["mesh_path"])
     
     # Apply random global transformation
     # Translation T_g: [-1, 1] for X, Y, Z axes
