@@ -26,7 +26,7 @@ def find_objaverse_objects():
                 glb_files.append(os.path.join(root, f))
     return glb_files
 
-def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False):
+def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False, random_diffuse_type=None):
     """
     Generate a single randomized scene JSON from a template and a pool of Objaverse objects.
 
@@ -49,6 +49,13 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         transform_scene (bool, optional): If True, applies a random global
             transformation (translation in [-1, 1], scale in [0.5, 2.0], full
             rotation) to all objects and cameras. Defaults to False.
+        random_diffuse_type (str, optional): If specified, forces the diffuse type
+            for all objects in the scene to be this type. Otherwise, it is
+            randomly selected from {"per-shading-group", "procedural", "per-triangle"}
+            with weights [0.5, 0.3, 0.2]. Options:
+            - per-shading-group: uniform texture per object
+            - per-triangle: random color assignment per triangle 
+            - procedural: sinusoidal spatial pattern with random frequency and color per object
 
     Returns:
         None. Writes a file named ``scene_{scene_idx:04d}.json`` to ``output_dir``.
@@ -113,16 +120,20 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     else:
         scene_walls = None
 
-        
-    scene['scene_name'] = f"scene_{scene_idx}"
+
+    # Randomly select the diffuse type for objects in the scene if not provided
+    if random_diffuse_type is None:
+        random_diffuse_type = random.choices(population=["per-shading-group", "procedural", "per-triangle"], weights=[0.5, 0.3, 0.2], k=1)[0] 
     
     # 1 to 15 random objects
     num_objects = random.randint(1, 15)
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
+
+    scene['scene_name'] = f"scene_{random_diffuse_type}_{scene_idx}"
     
     placed_bboxes = []
-    
-    actual_i = 0
+    actual_i = 0 # counter for placed objects
+
     for obj_path in selected_objects:
         obj_key = f"objaverse_{actual_i}"
         
@@ -219,7 +230,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         
         # "randomly assign material parameters either per-shading-group or per-triangle with a 1:1 ratio"
         # updated to allow procedural patterns as well
-        random_diffuse_type = random.choice(["per-shading-group", "procedural"]) # "per-triangle", 
+        # random_diffuse_type = random.choice(["per-shading-group", "procedural"]) # "per-triangle", 
         # "diffuse albedo with max intensity per color channel set such that sum with monochromatic specular lies between 0.9 and 1.0"
         sum_target = random.uniform(0.9, 1.0)
         specular_val = random.uniform(0.01, 0.5)
