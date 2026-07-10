@@ -90,7 +90,7 @@ def select_uids(num_objects=10, max_vertex_count=MAX_VERTEX_COUNT):
             
     return sample_uids
 
-def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_workers=16):
+def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_workers=32):
     """Custom download function to show a tqdm progress bar instead of printing new lines."""
     object_paths = objaverse._load_object_paths()
     out = {}
@@ -112,20 +112,20 @@ def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_work
             tmp_local_path = local_path + ".tmp"
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             
-            max_retries = 5
-            for attempt in range(max_retries):
-                try:
-                    urllib.request.urlretrieve(hf_url, tmp_local_path)
-                    os.rename(tmp_local_path, local_path)
-                    return uid, local_path
-                except urllib.error.HTTPError as e:
-                    if e.code == 429:
-                        # Exponential backoff on 429 Too Many Requests
-                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
-                        time.sleep(sleep_time)
-                    else:
-                        raise e
-            raise Exception(f"Failed to download {uid} after {max_retries} retries due to rate limiting.")
+            # max_retries = 5
+            # for attempt in range(max_retries):
+                # try:
+            urllib.request.urlretrieve(hf_url, tmp_local_path)
+            os.rename(tmp_local_path, local_path)
+            return uid, local_path
+                # except urllib.error.HTTPError as e:
+                #     if e.code == 429:
+                #         # Exponential backoff on 429 Too Many Requests
+                #         sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                #         time.sleep(sleep_time)
+                #     else:
+                #         raise e
+            # raise Exception(f"Failed to download {uid} after {max_retries} retries due to rate limiting.")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(download_single, item) for item in to_download]
@@ -140,10 +140,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_objects", type=int, default=10, help="Number of objects to download")
     parser.add_argument("--download", action="store_true", help="Download the selected objects")
-    parser.add_argument("--uid_file", type=str, default="selected_uids.txt", help="File to save/load selected UIDs")
+    parser.add_argument("--uid_filepath", type=str, default="", help="File to save/load selected UIDs")
+    parser.add_argument("--max_workers", type=int, default=16, help="Number of parallel download workers")
     args = parser.parse_args()
 
-    uid_file = args.uid_file
+    uid_file = args.uid_filepath
+    if not uid_file:
+        uid_file = f"data_generation/selected_uids_{args.num_objects}.txt"
+
     if os.path.exists(uid_file):
         print(f"Loading previously selected UIDs from {uid_file}...")
         with open(uid_file, "r") as f:
@@ -163,4 +167,4 @@ if __name__ == "__main__":
     # Proceed to download:
     if args.download:
         print("Downloading selected objects...")
-        objects = download_objects_with_progress(selected_uids)
+        objects = download_objects_with_progress(selected_uids, download_dir=GLB_DOWNLOAD_DIR, max_workers=args.max_workers)
