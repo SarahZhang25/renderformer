@@ -17,13 +17,13 @@ import numpy as np
 
 def find_objaverse_objects():
     objaverse_dir = "/dev/shm/objaverse" # "/home/sazhang/.objaverse"
-    print(f"Using objaverse_dir: {objaverse_dir}")
     # find all glb files
     glb_files = []
     for root, dirs, files in os.walk(objaverse_dir):
         for f in files:
             if f.endswith('.glb'):
                 glb_files.append(os.path.join(root, f))
+    print(f"Using objaverse_dir: {objaverse_dir} with {len(glb_files)} shapes")
     return glb_files
 
 def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False, random_diffuse_type=None):
@@ -58,7 +58,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             - procedural: sinusoidal spatial pattern with random frequency and color per object
 
     Returns:
-        None. Writes a file named ``scene_{scene_idx:04d}.json`` to ``output_dir``.
+        None. Writes a file named ``scene_{scene_idx:06d}.json`` to ``output_dir``.
     """
     template_dir = os.path.dirname(os.path.abspath(template_json))
     with open(template_json, 'r') as f:
@@ -125,8 +125,8 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     if random_diffuse_type is None:
         random_diffuse_type = random.choices(population=["per-shading-group", "procedural", "per-triangle"], weights=[0.5, 0.3, 0.2], k=1)[0] 
     
-    # 1 to 15 random objects
-    num_objects = random.randint(1, 15)
+    # 1 to 12 random objects
+    num_objects = random.randint(1, 12)
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
 
     scene['scene_name'] = f"scene_{random_diffuse_type}_{scene_idx}"
@@ -467,7 +467,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             cam["look_at"] = look_new.tolist()
             cam["up"] = up_new.tolist()
 
-    with open(os.path.join(output_dir, f"scene_{scene_idx:04d}.json"), 'w') as f:
+    with open(os.path.join(output_dir, f"scene_{scene_idx:06d}.json"), 'w') as f:
         json.dump(scene, f, indent=4)
 
 if __name__ == "__main__":
@@ -488,7 +488,7 @@ if __name__ == "__main__":
     template_json = "datasets/templates/cbox-3-walls.json"
     
     print("Finding objaverse objects...")
-    objaverse_objects = find_objaverse_objects()
+    objaverse_objects = find_objaverse_objects() # TODO: use the txt file instead?
     # objaverse_objects = random.sample(objaverse_objects, 5) # restrict to N objs
     print(f"Found {len(objaverse_objects)} glb files.")
     

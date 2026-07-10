@@ -196,7 +196,7 @@ class H5SceneDataset(Dataset):
     """
     def __init__(
         self,
-        data_dir: str,
+        data_dir, # can be a string or a list of strings
         resolution: int = 128,
         max_dataset_size = None,
         split: str = "all",
@@ -204,11 +204,18 @@ class H5SceneDataset(Dataset):
         shuffle: bool = True,
         shuffle_seed: int = 42
     ):
-        self.data_dir = data_dir
+        if isinstance(data_dir, str):
+            self.data_dirs = [data_dir]
+        else:
+            self.data_dirs = data_dir
+            
         self.resolution = resolution
         
         # Glob all rf-formatted chunk files
-        self.chunk_files = sorted(glob.glob(os.path.join(data_dir, "rf_dataset_chunk_*.h5")))
+        self.chunk_files = []
+        for d in self.data_dirs:
+            self.chunk_files.extend(glob.glob(os.path.join(d, "rf_dataset_chunk_*.h5")))
+        self.chunk_files = sorted(self.chunk_files)
         
         self.scene_index = []
         # Build index mapping global_idx -> (chunk_file, scene_name)
@@ -226,7 +233,7 @@ class H5SceneDataset(Dataset):
             self.scene_index = self.scene_index[:max_dataset_size]
 
         if split == "all":
-            print(f"[{split}] Using all {len(self.scene_index)} samples in {data_dir}")
+            print(f"[{split}] Using all {len(self.scene_index)} samples across directories: {self.data_dirs}")
         else:
             assert split in ['train', 'val'], "split must be 'train', 'val', or 'all'"
             split_idx = int(len(self.scene_index) * split_proportion)
@@ -235,7 +242,7 @@ class H5SceneDataset(Dataset):
             else:
                 self.scene_index = self.scene_index[split_idx:]
                 
-        print(f"[{split}] Found {len(self.scene_index)} samples across {len(self.chunk_files)} chunks in {data_dir}")
+        print(f"[{split}] Found {len(self.scene_index)} samples across {len(self.chunk_files)} chunks from {len(self.data_dirs)} directories")
 
         # Lazily store opened H5 handles per worker to avoid multiprocess fork issues
         self._h5_handles = {}
