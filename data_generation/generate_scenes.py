@@ -229,9 +229,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         actual_i += 1
         
         # "randomly assign material parameters either per-shading-group or per-triangle with a 1:1 ratio"
-        # updated to allow procedural patterns as well
         # random_diffuse_type = random.choice(["per-shading-group", "procedural"]) # "per-triangle", 
-        # "diffuse albedo with max intensity per color channel set such that sum with monochromatic specular lies between 0.9 and 1.0"
         sum_target = random.uniform(0.9, 1.0)
         specular_val = random.uniform(0.01, 0.5)
         random_diffuse_max = sum_target - specular_val
