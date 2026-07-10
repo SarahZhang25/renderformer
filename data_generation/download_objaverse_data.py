@@ -2,6 +2,8 @@ import objaverse
 import os
 import random
 import trimesh
+import urllib.request
+from tqdm import tqdm
 
 random.seed(42)
 MAX_VERTEX_COUNT = 50000
@@ -9,6 +11,7 @@ MAX_VERTEX_COUNT = 50000
 # Set base paths to your custom directory
 objaverse.BASE_PATH = "/home/sazhang/.objaverse"
 objaverse._VERSIONED_PATH = os.path.join(objaverse.BASE_PATH, "hf-objaverse-v1")
+GLB_DOWNLOAD_DIR = "/dev/shm/objaverse"
 
 def select_uids(num_objects=10, max_vertex_count=MAX_VERTEX_COUNT):
     print("Fetching LVIS annotations...")
@@ -84,10 +87,43 @@ def select_uids(num_objects=10, max_vertex_count=MAX_VERTEX_COUNT):
             
     return sample_uids
 
+def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR):
+    """Custom download function to show a tqdm progress bar instead of printing new lines."""
+    object_paths = objaverse._load_object_paths()
+    out = {}
+    to_download = []
+    
+    for uid in uids:
+        if uid in object_paths:
+            local_path = os.path.join(download_dir, object_paths[uid])
+            if not os.path.exists(local_path):
+                to_download.append((uid, object_paths[uid], local_path))
+            else:
+                out[uid] = local_path
+                
+    if to_download:
+        for uid, obj_path, local_path in tqdm(to_download, desc="Downloading models"):
+            hf_url = f"https://huggingface.co/datasets/allenai/objaverse/resolve/main/{obj_path}"
+            # Save to a temporary file first, then rename to avoid corrupted partial downloads
+            tmp_local_path = local_path + ".tmp"
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            urllib.request.urlretrieve(hf_url, tmp_local_path)
+            os.rename(tmp_local_path, local_path)
+            out[uid] = local_path
+            
+    return out
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_objects", type=int, default=10, help="Number of objects to download")
+    parser.add_argument("--download", action="store_true", help="Download the selected objects")
+    args = parser.parse_args()
+
     # Select up to 10000 objects
-    selected_uids = select_uids(num_objects=10)
-    print(f"Final selected count: {len(selected_uids)}")
+    selected_uids = select_uids(num_objects=args.num_objects)
     
     # Proceed to download:
-    # objects = objaverse.load_objects(uids=selected_uids)
+    if args.download:
+        print("Downloading selected objects...")
+        objects = download_objects_with_progress(selected_uids)

@@ -16,7 +16,7 @@ import trimesh
 import numpy as np
 
 def find_objaverse_objects():
-    objaverse_dir = os.path.expanduser("/home/sazhang/.objaverse")
+    objaverse_dir = "/dev/shm/objaverse" # "/home/sazhang/.objaverse"
     print(f"Using objaverse_dir: {objaverse_dir}")
     # find all glb files
     glb_files = []
@@ -493,7 +493,7 @@ if __name__ == "__main__":
     print(f"Found {len(objaverse_objects)} glb files.")
     
     if len(objaverse_objects) == 0:
-        print("No objaverse objects found. Please ensure ~/.objaverse contains .glb files.")
+        print("No objaverse objects found. Please ensure objaverse dir /dev/shm/objaverse contains .glb files.")
         
     print(f"Generating {num_scenes} scenes...")
     for i in range(num_scenes):
