@@ -1,8 +1,10 @@
 import objaverse
 import os
 import random
+import time
 import trimesh
 import urllib.request
+import urllib.error
 import concurrent.futures
 from tqdm import tqdm
 
@@ -109,9 +111,21 @@ def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_work
             # Save to a temporary file first, then rename to avoid corrupted partial downloads
             tmp_local_path = local_path + ".tmp"
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            urllib.request.urlretrieve(hf_url, tmp_local_path)
-            os.rename(tmp_local_path, local_path)
-            return uid, local_path
+            
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    urllib.request.urlretrieve(hf_url, tmp_local_path)
+                    os.rename(tmp_local_path, local_path)
+                    return uid, local_path
+                except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        # Exponential backoff on 429 Too Many Requests
+                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                        time.sleep(sleep_time)
+                    else:
+                        raise e
+            raise Exception(f"Failed to download {uid} after {max_retries} retries due to rate limiting.")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(download_single, item) for item in to_download]
