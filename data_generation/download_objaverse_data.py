@@ -3,6 +3,7 @@ import os
 import random
 import trimesh
 import urllib.request
+import concurrent.futures
 from tqdm import tqdm
 
 random.seed(42)
@@ -87,7 +88,7 @@ def select_uids(num_objects=10, max_vertex_count=MAX_VERTEX_COUNT):
             
     return sample_uids
 
-def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR):
+def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_workers=16):
     """Custom download function to show a tqdm progress bar instead of printing new lines."""
     object_paths = objaverse._load_object_paths()
     out = {}
@@ -102,14 +103,21 @@ def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR):
                 out[uid] = local_path
                 
     if to_download:
-        for uid, obj_path, local_path in tqdm(to_download, desc="Downloading models"):
+        def download_single(item):
+            uid, obj_path, local_path = item
             hf_url = f"https://huggingface.co/datasets/allenai/objaverse/resolve/main/{obj_path}"
             # Save to a temporary file first, then rename to avoid corrupted partial downloads
             tmp_local_path = local_path + ".tmp"
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             urllib.request.urlretrieve(hf_url, tmp_local_path)
             os.rename(tmp_local_path, local_path)
-            out[uid] = local_path
+            return uid, local_path
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(download_single, item) for item in to_download]
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Downloading models"):
+                uid, local_path = future.result()
+                out[uid] = local_path
             
     return out
 
@@ -118,10 +126,25 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_objects", type=int, default=10, help="Number of objects to download")
     parser.add_argument("--download", action="store_true", help="Download the selected objects")
+    parser.add_argument("--uid_file", type=str, default="selected_uids.txt", help="File to save/load selected UIDs")
     args = parser.parse_args()
 
-    # Select up to 10000 objects
-    selected_uids = select_uids(num_objects=args.num_objects)
+    uid_file = args.uid_file
+    if os.path.exists(uid_file):
+        print(f"Loading previously selected UIDs from {uid_file}...")
+        with open(uid_file, "r") as f:
+            selected_uids = [line.strip() for line in f if line.strip()]
+        # Truncate if we want fewer objects than saved
+        selected_uids = selected_uids[:args.num_objects]
+    else:
+        # Select objects
+        selected_uids = select_uids(num_objects=args.num_objects)
+        print(f"Saving selected UIDs to {uid_file}...")
+        with open(uid_file, "w") as f:
+            for uid in selected_uids:
+                f.write(f"{uid}\n")
+                
+    print(f"Final selected count: {len(selected_uids)}")
     
     # Proceed to download:
     if args.download:
