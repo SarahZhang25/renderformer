@@ -86,7 +86,7 @@ def scene_to_img(
                 imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
             else:
                 print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
-            skip_rendering = True
+            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
         
         if skip_rendering:
             return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
