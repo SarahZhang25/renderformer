@@ -73,6 +73,13 @@ def scene_to_img(
         fov = camera_config.fov
         
         c2w = look_at_to_c2w(camera_pos, look_at, up)
+        
+        temp_img_path = output_image_path.replace(".png", ".exr")
+        if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024 and \
+           (not save_img or (os.path.exists(output_image_path) and os.path.getsize(output_image_path) > 0)):
+            print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
+            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
+            
         camera = create_camera(c2w, fov)
         bpy.context.scene.camera = camera
         
@@ -98,11 +105,32 @@ def scene_to_img(
 
         if skip_rendering:
             return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
-        with stdout_redirected():
+        if True:
             temp_img_path = output_image_path.replace(".png", ".exr")
             bpy.context.scene.render.filepath = os.path.abspath(temp_img_path)
-            bpy.ops.render.render(animation=False, write_still=True)
+            
+            max_retries = 3
+            for attempt in range(max_retries):
+                bpy.ops.render.render(animation=False, write_still=True)
+                
+                # Safety check: if Blender hits VRAM OOM or output dir is full, it silently saves a 0-byte or truncated file
+                if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024:
+                    break
+                    
+                import time
+                if attempt < max_retries - 1:
+                    time.sleep(30)
+                else:
+                    file_size = os.path.getsize(temp_img_path) if os.path.exists(temp_img_path) else 0
+                    raise RuntimeError(
+                        f"Blender failed to render {temp_img_path} properly (file size is {file_size} bytes) after {max_retries} attempts. "
+                        f"This usually means the GPU ran out of VRAM (try lowering --workers_per_gpu) or the output dir is full."
+                    )
+                
             img = imageio.v3.imread(temp_img_path).copy()
+            if img.shape[0] == 0:
+                raise RuntimeError(f"imageio failed to read the EXR file (read 0 frames). The file is likely corrupted.")
+                
             if save_img:
                 imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
 
