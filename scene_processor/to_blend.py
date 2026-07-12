@@ -75,9 +75,17 @@ def scene_to_img(
         c2w = look_at_to_c2w(camera_pos, look_at, up)
         
         temp_img_path = output_image_path.replace(".png", ".exr")
-        if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024 and \
-           (not save_img or (os.path.exists(output_image_path) and os.path.getsize(output_image_path) > 0)):
-            print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
+        exr_valid = os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024
+        png_valid = os.path.exists(output_image_path) and os.path.getsize(output_image_path) > 0
+        
+        if exr_valid:
+            if save_img and not png_valid:
+                # EXR exists but PNG is missing. Skip Blender, just generate the PNG.
+                print(f"Skipping render for {output_image_path} (EXR exists), but generating missing PNG.", flush=True)
+                img = imageio.v3.imread(temp_img_path).copy()
+                imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
+            else:
+                print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
             return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
             
         camera = create_camera(c2w, fov)
