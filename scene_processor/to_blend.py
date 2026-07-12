@@ -86,8 +86,11 @@ def scene_to_img(
                 imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
             else:
                 print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
+            skip_rendering = True
+        
+        if skip_rendering:
             return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
-            
+
         camera = create_camera(c2w, fov)
         bpy.context.scene.camera = camera
         
@@ -111,8 +114,6 @@ def scene_to_img(
 
         bpy.context.scene.world.node_tree.nodes["Background"].inputs[1].default_value = 0.  # remove all ambient
 
-        if skip_rendering:
-            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
         if True:
             temp_img_path = output_image_path.replace(".png", ".exr")
             bpy.context.scene.render.filepath = os.path.abspath(temp_img_path)
@@ -196,7 +197,7 @@ if __name__ == "__main__":
                 save_img=args.save_img,
                 resolution=args.resolution,
                 spp=args.spp,
-                skip_rendering=False if args.save_img else True
+                skip_rendering=False
             )
     else:
         print(f"Using provided mesh path: {args.mesh_path}")
@@ -209,5 +210,5 @@ if __name__ == "__main__":
             save_img=args.save_img,
             resolution=args.resolution,
             spp=args.spp,
-            skip_rendering=False if args.save_img else True
+            skip_rendering=False
         )
