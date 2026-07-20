@@ -26,7 +26,7 @@ def find_objaverse_objects():
     print(f"Using objaverse_dir: {objaverse_dir} with {len(glb_files)} shapes")
     return glb_files
 
-def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False, random_diffuse_type=None):
+def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_views=4, transform_scene=False, random_diffuse_type=None, color_lights=False):
     """
     Generate a single randomized scene JSON from a template and a pool of Objaverse objects.
 
@@ -80,6 +80,13 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
             color = [max(0.1, min(0.9, base_lightness + random.uniform(-variance, variance))) for _ in range(3)]
             if "material" in obj_info:
                 obj_info["material"]["diffuse"] = color
+                
+                # Randomize specular (mostly matte but slightly reflective)
+                specular_val = random.uniform(0.0, 0.3)
+                obj_info["material"]["specular"] = [specular_val, specular_val, specular_val]
+                
+                # Randomize roughness (log-sampled)
+                obj_info["material"]["roughness"] = math.exp(random.uniform(math.log(0.1), math.log(1.0)))
         
     # Pre-load template walls/backgrounds for camera occlusion checking.
     # We load the mesh directly from the mesh_path in the JSON (which should be absolute).
@@ -374,6 +381,13 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         # Compensated intensity
         intensity = base_total_intensity * (S_g ** 2) * normalized_weights[i]
         
+        # Optionally tint the lights
+        if color_lights:
+            tint = [random.uniform(0.7, 1.0) for _ in range(3)]
+            emissive = [intensity * t for t in tint]
+        else:
+            emissive = [intensity, intensity, intensity]
+        
         scene['objects'][f"light_{i}"] = {
             # "mesh_path": "../../templates/lighting/tri.obj",            
             "mesh_path": os.path.join(template_dir, "lighting", "tri.obj"),
@@ -387,7 +401,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
                 "diffuse": [1.0, 1.0, 1.0],
                 "specular": [0.0, 0.0, 0.0],
                 "roughness": 1.0,
-                "emissive": [intensity, intensity, intensity],
+                "emissive": emissive,
                 "smooth_shading": False,
                 "random_diffuse_max": 0.0,
                 "random_diffuse_type": "per-shading-group",
