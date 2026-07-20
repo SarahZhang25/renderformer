@@ -3,7 +3,8 @@ Render all JSON scenes in a directory using to_blend.py
 
 Example usage:
     python3 data_generation/render_all_scenes.py --input_dir <input_dir> --output_dir <output_dir> --spp 512 --num_workers 4
-"""
+    CUDA_VISIBLE_DEVICES=1 python3 data_generation/render_all_scenes.py --input_dir /dev/shm/dataset_test --output_dir /home/sazhang/Neural-Radiosity-Renderer/tmp/dataset_test --spp 512 --num_workers 1 --save_img --no_dump_blend
+    """
 
 import os
 import glob

@@ -16,7 +16,7 @@ import trimesh
 import numpy as np
 
 def find_objaverse_objects():
-    objaverse_dir = "/dev/shm/objaverse" # "/home/sazhang/.objaverse"
+    objaverse_dir = "/storage/sazhang/objaverse" # "/dev/shm/objaverse" # "/home/sazhang/.objaverse"
     # find all glb files
     glb_files = []
     for root, dirs, files in os.walk(objaverse_dir):
@@ -126,7 +126,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         random_diffuse_type = random.choices(population=["per-shading-group", "procedural", "per-triangle"], weights=[0.5, 0.3, 0.2], k=1)[0] 
     
     # 1 to 12 random objects
-    num_objects = random.randint(1, 12)
+    num_objects = random.randint(1, 6)
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
 
     scene['scene_name'] = f"scene_{random_diffuse_type}_{scene_idx}"
