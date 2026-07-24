@@ -124,6 +124,7 @@ def scene_to_img(
                 
                 # Safety check: if Blender hits VRAM OOM or output dir is full, it silently saves a 0-byte or truncated file
                 if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024:
+                    print(f"Successfully rendered {temp_img_path}")
                     break
                     
                 import time
@@ -136,7 +137,8 @@ def scene_to_img(
                         f"This usually means the GPU ran out of VRAM (try lowering --workers_per_gpu) or the output dir is full."
                     )
                 
-            img = imageio.v3.imread(temp_img_path).copy()
+            img = imageio.v3.imread(temp_img_path, plugin="EXR-FI").copy()
+            print(f"Loaded image from {temp_img_path} using EXR-FI plugin, shape: {img.shape}")
             if img.shape[0] == 0:
                 raise RuntimeError(f"imageio failed to read the EXR file (read 0 frames). The file is likely corrupted.")
                 
