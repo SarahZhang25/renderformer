@@ -362,7 +362,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     for k in keys_to_delete:
         del scene['objects'][k]
         
-    num_lights = 1 #random.randint(1, 8)
+    num_lights = random.randint(1, 8)
     # Set total intensity and randomly weight individual light ocntributions
     base_total_intensity = random.uniform(2000, 4000)
     S_g = random.uniform(0.5, 2.0) if transform_scene else 1.0
@@ -383,8 +383,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         
         # Optionally tint the lights
         if color_lights:
-            tint = [1.0, 0, 0] # red [random.uniform(0.2, 1.0) for _ in range(3)]
-            print("COLORING LIGHTS", tint)
+            tint = [random.uniform(0.5, 1.0) for _ in range(3)]
             emissive = [intensity * t for t in tint]
         else:
             emissive = [intensity, intensity, intensity]
