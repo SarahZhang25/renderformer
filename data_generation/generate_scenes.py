@@ -293,7 +293,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
                 "procedural_color_b": procedural_color_b
             },
             "remesh": True,
-            "remesh_target_face_num": 512 #remesh_target
+            "remesh_target_face_num": 1024 #remesh_target
         }
         
     # Camera
@@ -364,7 +364,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         
     num_lights = random.randint(1, 8)
     # Set total intensity and randomly weight individual light ocntributions
-    base_total_intensity = random.uniform(2500, 5000)
+    base_total_intensity = random.uniform(2000, 4000)
     S_g = random.uniform(0.5, 2.0) if transform_scene else 1.0
     
     weights = [random.uniform(0.5, 1.5) for _ in range(num_lights)]
@@ -383,7 +383,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         
         # Optionally tint the lights
         if color_lights:
-            tint = [random.uniform(0.7, 1.0) for _ in range(3)]
+            tint = [random.uniform(0.5, 1.0) for _ in range(3)]
             emissive = [intensity * t for t in tint]
         else:
             emissive = [intensity, intensity, intensity]

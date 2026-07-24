@@ -42,11 +42,18 @@ def scene_to_img(
             for obj_key, obj_config in scene_config.objects.items():
                 import_3d_model(f'{split_mesh_path}/{obj_key}.obj')
                 material_config = obj_config.material
-                if obj_config.material.emissive[0] > 0:
+                emissive = obj_config.material.emissive
+                if any(e > 0 for e in emissive):
+                    max_val = max(emissive)
                     material = create_white_emmissive_material(
-                        strength=material_config.emissive[0],
+                        strength=max_val,
                         material_name=f"{obj_key}"
                     )
+                    # Normalize RGB color tint and apply to BSDF node (Blender 4.0+)
+                    color = (emissive[0] / max_val, emissive[1] / max_val, emissive[2] / max_val, 1.0)
+                    bsdf = material.node_tree.nodes["Principled BSDF"]
+                    bsdf.inputs["Emission Color"].default_value = color
+                    bsdf.inputs["Base Color"].default_value = color
                 else:
                     material = create_specular_roughness_material(
                         diffuse_color=tuple(material_config.diffuse),
@@ -124,6 +131,7 @@ def scene_to_img(
                 
                 # Safety check: if Blender hits VRAM OOM or output dir is full, it silently saves a 0-byte or truncated file
                 if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024:
+                    print(f"Successfully rendered {temp_img_path}")
                     break
                     
                 import time
@@ -136,7 +144,8 @@ def scene_to_img(
                         f"This usually means the GPU ran out of VRAM (try lowering --workers_per_gpu) or the output dir is full."
                     )
                 
-            img = imageio.v3.imread(temp_img_path).copy()
+            img = imageio.v3.imread(temp_img_path, plugin="EXR-FI").copy()
+            print(f"Loaded image from {temp_img_path} using EXR-FI plugin, shape: {img.shape}")
             if img.shape[0] == 0:
                 raise RuntimeError(f"imageio failed to read the EXR file (read 0 frames). The file is likely corrupted.")
                 
