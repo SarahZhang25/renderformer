@@ -3,6 +3,7 @@ import h5py
 import glob
 import argparse
 from tqdm import tqdm
+import concurrent.futures
 
 def compress_h5(file_path):
     temp_path = file_path + ".tmp"
@@ -27,11 +28,13 @@ def compress_h5(file_path):
                 needs_compression = True
                 
         if not needs_compression:
-            return False
+            return (False, 0, 0)
             
         with h5py.File(temp_path, 'w') as f_out:
             if is_chunked:
-                for scene_name in f_in.keys():
+                scene_keys = list(f_in.keys())
+                # Added inner tqdm per-scene
+                for scene_name in tqdm(scene_keys, desc=f"Scenes in {os.path.basename(file_path)}", leave=False):
                     grp_out = f_out.create_group(scene_name)
                     grp_in = f_in[scene_name]
                     for key in grp_in.keys():
@@ -56,11 +59,12 @@ def compress_h5(file_path):
     old_size = os.path.getsize(old_format_path)
     new_size = os.path.getsize(file_path)
     
-    return True, old_size, new_size
+    return (True, old_size, new_size)
 
 def main():
     parser = argparse.ArgumentParser(description="Compress old bloated H5 files into the new lightweight format.")
     parser.add_argument("--dir", type=str, required=True, help="Directory containing the .h5 files to compress")
+    parser.add_argument("--workers", type=int, default=16, help="Number of parallel workers")
     args = parser.parse_args()
     
     h5_files = glob.glob(os.path.join(args.dir, "rf_*.h5"))
@@ -68,18 +72,22 @@ def main():
         print(f"No .h5 files found in {args.dir}")
         return
         
-    print(f"Found {len(h5_files)} .h5 files. Checking for bloated textures...")
+    print(f"Found {len(h5_files)} .h5 files. Checking for bloated textures using {args.workers} workers...")
     
     compressed_count = 0
     total_old_size = 0
     total_new_size = 0
-    for file_path in tqdm(h5_files):
-        result = compress_h5(file_path)
-        if result:
-            _, old_size, new_size = result
-            compressed_count += 1
-            total_old_size += old_size
-            total_new_size += new_size
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(compress_h5, fp): fp for fp in h5_files}
+        
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(h5_files), desc="Files"):
+            result = future.result()
+            if result[0]:
+                _, old_size, new_size = result
+                compressed_count += 1
+                total_old_size += old_size
+                total_new_size += new_size
             
     print(f"\nDone! Compressed {compressed_count} bloated files.")
     if compressed_count > 0:
