@@ -60,8 +60,6 @@ def save_to_h5(scene_config: SceneConfig, mesh_path: str, output_h5_path: str):
         normal[..., 2] = 1.
         irradiance = np.array(material_config.emissive)[None, :].repeat(triangles.shape[0], axis=0)
         texture = np.concatenate([diffuse, specular, roughness, normal, irradiance], axis=1)
-        texture = np.repeat(np.repeat(texture[..., None], size, axis=-1)[..., None], size, axis=-1)
-        texture[:, :, ~mask] = 0.0
 
         all_triangles.append(triangles)
         all_vn.append(vn)

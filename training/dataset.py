@@ -94,6 +94,8 @@ class SceneDataset(Dataset):
         with h5py.File(file_path, 'r') as f:
             triangles = torch.from_numpy(np.array(f['triangles'])).float()
             texture = torch.from_numpy(np.array(f['texture'])).float()
+            if texture.dim() == 4:
+                texture = texture[:, :, 0, 0]
             vn = torch.from_numpy(np.array(f['vn'])).float()
             c2w = torch.from_numpy(np.array(f['c2w'])).float()
             fov = torch.from_numpy(np.array(f['fov'])).float()
@@ -145,6 +147,8 @@ class SingleSceneDataset(Dataset):
             self.triangles = torch.from_numpy(np.array(f['triangles'])).float()
             self.num_tris = self.triangles.shape[0]
             self.texture = torch.from_numpy(np.array(f['texture'])).float()
+            if self.texture.dim() == 4:
+                self.texture = self.texture[:, :, 0, 0]
             self.vn = torch.from_numpy(np.array(f['vn'])).float()
             self.c2w = torch.from_numpy(np.array(f['c2w'])).float()
             self.fov = torch.from_numpy(np.array(f['fov'])).float()
@@ -263,6 +267,8 @@ class H5SceneDataset(Dataset):
         
         triangles = torch.from_numpy(np.array(grp['triangles'])).float()
         texture = torch.from_numpy(np.array(grp['texture'])).float()
+        if texture.dim() == 4:
+            texture = texture[:, :, 0, 0]
         vn = torch.from_numpy(np.array(grp['vn'])).float()
         c2w = torch.from_numpy(np.array(grp['c2w'])).float()
         fov = torch.from_numpy(np.array(grp['fov'])).float()
