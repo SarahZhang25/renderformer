@@ -42,11 +42,18 @@ def scene_to_img(
             for obj_key, obj_config in scene_config.objects.items():
                 import_3d_model(f'{split_mesh_path}/{obj_key}.obj')
                 material_config = obj_config.material
-                if obj_config.material.emissive[0] > 0:
+                emissive = obj_config.material.emissive
+                if any(e > 0 for e in emissive):
+                    max_val = max(emissive)
                     material = create_white_emmissive_material(
-                        strength=material_config.emissive[0],
+                        strength=max_val,
                         material_name=f"{obj_key}"
                     )
+                    # Normalize RGB color tint and apply to BSDF node (Blender 4.0+)
+                    color = (emissive[0] / max_val, emissive[1] / max_val, emissive[2] / max_val, 1.0)
+                    bsdf = material.node_tree.nodes["Principled BSDF"]
+                    bsdf.inputs["Emission Color"].default_value = color
+                    bsdf.inputs["Base Color"].default_value = color
                 else:
                     material = create_specular_roughness_material(
                         diffuse_color=tuple(material_config.diffuse),
@@ -73,6 +80,24 @@ def scene_to_img(
         fov = camera_config.fov
         
         c2w = look_at_to_c2w(camera_pos, look_at, up)
+        
+        temp_img_path = output_image_path.replace(".png", ".exr")
+        exr_valid = os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024
+        png_valid = os.path.exists(output_image_path) and os.path.getsize(output_image_path) > 0
+        
+        if exr_valid:
+            if save_img and not png_valid:
+                # EXR exists but PNG is missing. Skip Blender, just generate the PNG.
+                print(f"Skipping render for {output_image_path} (EXR exists), but generating missing PNG.", flush=True)
+                img = imageio.v3.imread(temp_img_path).copy()
+                imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
+            else:
+                print(f"Skipping render for {output_image_path}, valid files already exist.", flush=True)
+            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
+        
+        if skip_rendering:
+            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
+
         camera = create_camera(c2w, fov)
         bpy.context.scene.camera = camera
         
@@ -96,13 +121,34 @@ def scene_to_img(
 
         bpy.context.scene.world.node_tree.nodes["Background"].inputs[1].default_value = 0.  # remove all ambient
 
-        if skip_rendering:
-            return np.zeros((resolution, resolution, 4), dtype=np.float32), c2w
-        with stdout_redirected():
+        if True:
             temp_img_path = output_image_path.replace(".png", ".exr")
             bpy.context.scene.render.filepath = os.path.abspath(temp_img_path)
-            bpy.ops.render.render(animation=False, write_still=True)
-            img = imageio.v3.imread(temp_img_path).copy()
+            
+            max_retries = 3
+            for attempt in range(max_retries):
+                bpy.ops.render.render(animation=False, write_still=True)
+                
+                # Safety check: if Blender hits VRAM OOM or output dir is full, it silently saves a 0-byte or truncated file
+                if os.path.exists(temp_img_path) and os.path.getsize(temp_img_path) >= 1024:
+                    print(f"Successfully rendered {temp_img_path}")
+                    break
+                    
+                import time
+                if attempt < max_retries - 1:
+                    time.sleep(30)
+                else:
+                    file_size = os.path.getsize(temp_img_path) if os.path.exists(temp_img_path) else 0
+                    raise RuntimeError(
+                        f"Blender failed to render {temp_img_path} properly (file size is {file_size} bytes) after {max_retries} attempts. "
+                        f"This usually means the GPU ran out of VRAM (try lowering --workers_per_gpu) or the output dir is full."
+                    )
+                
+            img = imageio.v3.imread(temp_img_path, plugin="EXR-FI").copy()
+            print(f"Loaded image from {temp_img_path} using EXR-FI plugin, shape: {img.shape}")
+            if img.shape[0] == 0:
+                raise RuntimeError(f"imageio failed to read the EXR file (read 0 frames). The file is likely corrupted.")
+                
             if save_img:
                 imageio.v3.imwrite(output_image_path, (img * 255).clip(0, 255).astype(np.uint8))
 
@@ -160,7 +206,7 @@ if __name__ == "__main__":
                 save_img=args.save_img,
                 resolution=args.resolution,
                 spp=args.spp,
-                skip_rendering=False if args.save_img else True
+                skip_rendering=False
             )
     else:
         print(f"Using provided mesh path: {args.mesh_path}")
@@ -173,5 +219,5 @@ if __name__ == "__main__":
             save_img=args.save_img,
             resolution=args.resolution,
             spp=args.spp,
-            skip_rendering=False if args.save_img else True
+            skip_rendering=False
         )

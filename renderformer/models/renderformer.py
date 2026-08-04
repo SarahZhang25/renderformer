@@ -146,8 +146,21 @@ class RenderFormer(nn.Module, PyTorchModelHubMixin):
             vn_emb = 0.
 
         # texture encoding
+        B, N, C = texture_patch_list.shape
+        size = self.config.texture_encode_patch_size
+        
+        # Build mask dynamically on the GPU
+        tex_mask = torch.zeros((size, size), dtype=torch.bool, device=texture_patch_list.device)
+        x, y = torch.meshgrid(torch.arange(size, device=texture_patch_list.device), 
+                              torch.arange(size, device=texture_patch_list.device), indexing='ij')
+        tex_mask[x + y <= size] = True
+        
+        # Expand 11-channel vector to 32x32 grid using 0-memory broadcasting, then mask
+        texture_expanded = texture_patch_list.unsqueeze(-1).unsqueeze(-1).expand(B, N, C, size, size).clone()
+        texture_expanded[..., ~tex_mask] = 0.0
+        
         tri_tex_emb = self.texture_encoder_norm(self.texture_encoder(
-            texture_patch_list.reshape(texture_patch_list.size(0), texture_patch_list.size(1), -1)
+            texture_expanded.reshape(B, N, -1)
         ))
 
         # construct sequence

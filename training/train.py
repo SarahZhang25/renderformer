@@ -217,10 +217,10 @@ class Trainer:
         )
 
         # ---- Logging ----
-        base_log_dir = self.tc.get(
-            'log_dir',
-            f'training/logs/{self.dataset_train.data_dir.split("/")[-1]}'
-        )
+        base_log_dir = self.tc.get('log_dir', 'training/logs')
+        first_data_dir = self.tc['data_dir'][0] if isinstance(self.tc['data_dir'], list) else self.tc['data_dir']
+        dataset_name = first_data_dir.split('/')[-1]
+        
         run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         if self.tc.get('run_name'):
             run_id += f"_{self.tc['run_name']}"
