@@ -5,8 +5,8 @@ python check_params.py --config training/train_config.yml
 
 import yaml
 import argparse
-from renderformer.models.config import RenderFormerConfig
-from renderformer.models.renderformer import RenderFormer
+from renderformer.renderformer.models.config import RenderFormerConfig
+from renderformer.renderformer.models.renderformer import RenderFormer
 
 def main():
     parser = argparse.ArgumentParser()

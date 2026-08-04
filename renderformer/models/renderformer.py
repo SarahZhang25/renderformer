@@ -4,10 +4,10 @@ from torch.amp import autocast
 
 from huggingface_hub import PyTorchModelHubMixin
 
-from renderformer.encodings.nerf_encoding import NeRFEncoding
-from renderformer.layers.attention import TransformerEncoder
-from renderformer.models.view_transformer import ViewTransformer
-from renderformer.models.config import RenderFormerConfig
+from renderformer.renderformer.encodings.nerf_encoding import NeRFEncoding
+from renderformer.renderformer.layers.attention import TransformerEncoder
+from renderformer.renderformer.models.view_transformer import ViewTransformer
+from renderformer.renderformer.models.config import RenderFormerConfig
 
 
 class RenderFormer(nn.Module, PyTorchModelHubMixin):
@@ -155,13 +155,29 @@ class RenderFormer(nn.Module, PyTorchModelHubMixin):
                               torch.arange(size, device=texture_patch_list.device), indexing='ij')
         tex_mask[x + y <= size] = True
         
-        # Expand 11-channel vector to 32x32 grid using 0-memory broadcasting, then mask
-        texture_expanded = texture_patch_list.unsqueeze(-1).unsqueeze(-1).expand(B, N, C, size, size).clone()
-        texture_expanded[..., ~tex_mask] = 0.0
+        # Efficient mathematically equivalent texture encoding to prevent OOM.
+        # Instead of expanding [B, N, C] to [B, N, C, size, size] and masking it (which takes ~100GB of VRAM),
+        # we mask and sum the Linear layer's weights spatially, then project [B, N, C] directly.
+        weight = self.texture_encoder.weight
+        bias = self.texture_encoder.bias
         
-        tri_tex_emb = self.texture_encoder_norm(self.texture_encoder(
-            texture_expanded.reshape(B, N, -1)
-        ))
+        latent_dim = weight.shape[0]
+        # Reshape weight to [latent_dim, C, size, size]
+        weight_reshaped = weight.view(latent_dim, C, size, size)
+        
+        # Mask the weights
+        weight_masked = torch.where(
+            tex_mask.unsqueeze(0).unsqueeze(0), 
+            weight_reshaped, 
+            torch.zeros_like(weight_reshaped)
+        )
+        
+        # Sum over spatial dimensions to get [latent_dim, C]
+        effective_weight = weight_masked.sum(dim=(2, 3))
+        
+        # Apply the linear projection directly
+        tri_tex_emb = torch.nn.functional.linear(texture_patch_list, effective_weight, bias)
+        tri_tex_emb = self.texture_encoder_norm(tri_tex_emb)
 
         # construct sequence
         tokens = []

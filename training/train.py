@@ -25,10 +25,10 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from dataset import SceneDataset, scene_collate_fn
 
-from renderformer.models.config import RenderFormerConfig
-from renderformer.models.renderformer import RenderFormer
-from renderformer.utils.ray_generator import RayGenerator
-from renderformer.utils.transform import trans_to_cam_coord
+from renderformer.renderformer.models.config import RenderFormerConfig
+from renderformer.renderformer.models.renderformer import RenderFormer
+from renderformer.renderformer.utils.ray_generator import RayGenerator
+from renderformer.renderformer.utils.transform import trans_to_cam_coord
 
 # Global CUDA performance flags (safe defaults, no accuracy impact)
 torch.backends.cuda.matmul.allow_tf32 = True   # ~2x matmul throughput on Ampere+

@@ -50,19 +50,32 @@ model:
   use_ldr: False
 
 training:
-  data_dir: "datasets/processed_datasets/ds2_chairs1-3_cbox0-3"
-  log_dir: "training/logs/ds2_chairs1-3_cbox0-3"
-  run_name: "full_ds_128x128"
-  # max_dataset_size: 10     # If none, will use entire dataset
-  resolution: 128
-  batch_size: 64           # process all cached scenes in one forward pass
-  # val_batch_size: 10       # batch size for validation dataloader. If not defined, will default to same as batch_size
-  epochs: 20000
-  warmup_epochs: 2000
-  lr: 1e-4
-  device: "cuda"
-  num_workers: 0           # workers for initial cache-fill DataLoader
-  use_amp: True            # bf16 autocast on model forward; losses run in fp32
-  use_compile: False       # torch.compile — big speedup but slow first-epoch warm-up
-  log_viz_interval: 200    # epochs between validation + image logging
-  checkpoint_interval: 1000
+#  According to the linear scaling rule, 
+#  a 4x increase in batch size usually allows for a 4x increase in learning rate
+  global_batch_size: 128 #192 # 24 * 8
+  learning_rate: 1.0e-4 # RF paper suggests 1e-4 
+  weight_decay: 0.01  # applied to weight matrices only; biases/norms exempt
+  min_learning_rate: 1.0e-6
+  num_steps: 75000 # 
+  warmup_steps: 4000
+  save_interval_steps: 2500  # for visualization
+  checkpoint_interval_steps: 15000  # for saving model checkpoint 
+  log_interval_steps: 25
+  image_res: 128
+  data_dir: 
+      - "/dev/shm/datasets/dataset_uniform" # all 100k  
+  dataset_split_ratio: 0.99
+  log_dir: "training/logs/dataset_uniform_full"
+  run_name: "params71M_renderformer_d512" # Optional string tag for log dir name
+  # max_dataset_size: 10   # Optional max samples for dataset
+  # shuffle_data: true # defaults to true
+  # shuffle_data_seed: 42
+  primary_loss: 'mae' # 'mse'
+  lpips_backbone: 'alex' # 'vgg'
+  lpips_loss_weighting: 0.05
+  use_amp: True
+  use_compile: False
+  package_model: True
+  num_workers: 30
+  prefetch_factor: 12
+  cache_strategy: 'disk'

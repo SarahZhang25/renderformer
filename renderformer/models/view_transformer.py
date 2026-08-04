@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from renderformer.models.config import RenderFormerConfig
-from renderformer.encodings.nerf_encoding import NeRFEncoding
-from renderformer.layers.attention import TransformerDecoder
-from renderformer.layers.dpt import DPTHead
+from renderformer.renderformer.models.config import RenderFormerConfig
+from renderformer.renderformer.encodings.nerf_encoding import NeRFEncoding
+from renderformer.renderformer.layers.attention import TransformerDecoder
+from renderformer.renderformer.layers.dpt import DPTHead
 
 from einops import rearrange
 

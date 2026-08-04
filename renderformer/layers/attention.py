@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from renderformer.encodings.rope import (
+from renderformer.renderformer.encodings.rope import (
     TriangleRotaryEmbedding,
     freqs_to_cos_sin,
     apply_rotary_emb_cossin,

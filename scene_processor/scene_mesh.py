@@ -9,8 +9,8 @@ try:
     from scene_config import SceneConfig, MaterialConfig
     from remesh import remesh
 except ImportError:
-    from renderformer.scene_processor.scene_config import SceneConfig, MaterialConfig
-    from renderformer.scene_processor.remesh import remesh
+    from renderformer.renderformer.scene_processor.scene_config import SceneConfig, MaterialConfig
+    from renderformer.renderformer.scene_processor.remesh import remesh
 
 def get_procedural_color(vertices: np.ndarray, config: MaterialConfig) -> np.ndarray:
     pattern = config.procedural_pattern

@@ -1,8 +1,8 @@
 import torch
 
-from renderformer.models.renderformer import RenderFormer
-from renderformer.utils.ray_generator import RayGenerator
-from renderformer.utils.transform import trans_to_cam_coord
+from renderformer.renderformer.models.renderformer import RenderFormer
+from renderformer.renderformer.utils.ray_generator import RayGenerator
+from renderformer.renderformer.utils.transform import trans_to_cam_coord
 
 
 class RenderFormerRenderingPipeline:

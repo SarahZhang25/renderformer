@@ -201,10 +201,10 @@ class H5SceneDataset(Dataset):
     def __init__(
         self,
         data_dir, # can be a string or a list of strings
-        resolution: int = 128,
-        max_dataset_size = None,
+        image_res: int = 128,
+        max_dataset_size: int = None,
         split: str = "all",
-        split_proportion: float = 0.9,
+        split_ratio: float = 0.9,
         shuffle: bool = True,
         shuffle_seed: int = 42
     ):
@@ -213,43 +213,81 @@ class H5SceneDataset(Dataset):
         else:
             self.data_dirs = data_dir
             
-        self.resolution = resolution
+        self.image_res = image_res
         
         # Glob all rf-formatted chunk files
         self.chunk_files = []
         for d in self.data_dirs:
-            self.chunk_files.extend(glob.glob(os.path.join(d, "rf_dataset_chunk_*.h5")))
-        self.chunk_files = sorted(self.chunk_files)
+            if d.endswith('.h5'):
+                self.chunk_files.append(d)
+            else:
+                self.chunk_files.extend(glob.glob(os.path.join(d, "rf_dataset_chunk_*.h5")))
+        self.chunk_files = sorted(list(set(self.chunk_files)))
         
-        self.scene_index = []
-        # Build index mapping global_idx -> (chunk_file, scene_name)
+        # Build compact per-chunk metadata: one entry per chunk, not per sample.
+        self.chunk_meta = []  # list of (chunk_path, scene_names_list)
         for chunk_file in self.chunk_files:
             with h5py.File(chunk_file, 'r') as f:
-                for scene_name in f.keys():
-                    self.scene_index.append((chunk_file, scene_name))
+                scene_names = list(f.keys())
+            self.chunk_meta.append((chunk_file, scene_names))
+            
+        # chunk_offsets[i] = first global scene index in chunk i (in scenes)
+        scene_counts = np.array([len(names) for _, names in self.chunk_meta], dtype=np.int64)
+        self.chunk_offsets = np.concatenate([[0], np.cumsum(scene_counts)]).astype(np.int64)
+        total_scenes = int(self.chunk_offsets[-1])
         
-        if shuffle:
-            rng = np.random.RandomState(shuffle_seed)
-            # Shuffle the index safely
-            rng.shuffle(self.scene_index)
+        if max_dataset_size is not None and max_dataset_size < total_scenes:
+            total_scenes = max_dataset_size
 
-        if max_dataset_size is not None and max_dataset_size < len(self.scene_index):
-            self.scene_index = self.scene_index[:max_dataset_size]
-
+        sample_order = np.arange(total_scenes, dtype=np.int32)
+        
         if split == "all":
-            print(f"[{split}] Using all {len(self.scene_index)} samples across directories: {self.data_dirs}")
+            print(f"[{split}] Using all {len(sample_order)} scenes across {len(self.chunk_files)} chunks")
         else:
             assert split in ['train', 'val'], "split must be 'train', 'val', or 'all'"
-            split_idx = int(len(self.scene_index) * split_proportion)
+            split_idx = int(total_scenes * split_ratio)
             if split == 'train':
-                self.scene_index = self.scene_index[:split_idx]
+                sample_order = sample_order[:split_idx]
             else:
-                self.scene_index = self.scene_index[split_idx:]
+                sample_order = sample_order[split_idx:]
                 
-        print(f"[{split}] Found {len(self.scene_index)} samples across {len(self.chunk_files)} chunks from {len(self.data_dirs)} directories")
+        self.shuffle = shuffle
+        self.shuffle_seed = shuffle_seed
+        self.original_sample_order = sample_order.copy()
+        self.sample_order = sample_order
+        
+        # Initial shuffle
+        self.set_epoch(0)
+        
+        print(f"[{split}] Found {len(self.sample_order)} scenes across {len(self.chunk_files)} chunks from {len(self.data_dirs)} directories")
 
         # Lazily store opened H5 handles per worker to avoid multiprocess fork issues
         self._h5_handles = {}
+
+    def set_epoch(self, epoch: int):
+        if not self.shuffle:
+            return
+            
+        rng = np.random.RandomState(self.shuffle_seed + epoch)
+        
+        # Determine exact chunk boundaries within our current split's sample_order
+        global_chunk_boundaries = self.chunk_offsets
+        # Find where these global boundaries land inside our sliced sample_order
+        local_boundaries = np.searchsorted(self.original_sample_order, global_chunk_boundaries)
+        # Ensure 0 and len(sample_order) are included, and remove duplicates
+        local_boundaries = np.unique(np.clip(local_boundaries, 0, len(self.original_sample_order)))
+        
+        blocks = []
+        for i in range(len(local_boundaries) - 1):
+            start = local_boundaries[i]
+            end = local_boundaries[i+1]
+            if start < end:
+                block = self.original_sample_order[start:end].copy()
+                rng.shuffle(block)
+                blocks.append(block)
+                
+        rng.shuffle(blocks)
+        self.sample_order = np.concatenate(blocks)
 
     def _get_h5_file(self, chunk_path):
         if chunk_path not in self._h5_handles:
@@ -257,11 +295,20 @@ class H5SceneDataset(Dataset):
             self._h5_handles[chunk_path] = h5py.File(chunk_path, 'r', swmr=True)
         return self._h5_handles[chunk_path]
 
+    def _decode_idx(self, idx):
+        """Convert a position in sample_order to (chunk_path, scene_name)."""
+        scene_idx = int(self.sample_order[idx])
+        # Binary search to find which chunk this scene belongs to
+        chunk_idx = int(np.searchsorted(self.chunk_offsets, scene_idx, side='right')) - 1
+        local_scene_idx = scene_idx - int(self.chunk_offsets[chunk_idx])
+        chunk_path, scene_names = self.chunk_meta[chunk_idx]
+        return chunk_path, scene_names[local_scene_idx]
+
     def __len__(self):
-        return len(self.scene_index)
+        return len(self.sample_order)
 
     def __getitem__(self, idx):
-        chunk_file, scene_name = self.scene_index[idx]
+        chunk_file, scene_name = self._decode_idx(idx)
         f = self._get_h5_file(chunk_file)
         grp = f[scene_name]
         
@@ -276,12 +323,14 @@ class H5SceneDataset(Dataset):
         
         # Load embedded HDR image directly from HDF5
         gt_img = torch.from_numpy(grp['hdr_target_image'][:]).float()
+        if gt_img.shape[-1] == 4:
+            gt_img = gt_img[..., :3]
         
         # Resize if necessary
-        if gt_img.shape[1] != self.resolution:
+        if gt_img.shape[1] != self.image_res:
             # Permute to shape expected by interpolate: [N, C, H, W] (where N = num_views)
             gt_img = gt_img.permute(0, 3, 1, 2) 
-            gt_img = torch.nn.functional.interpolate(gt_img, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False)
+            gt_img = torch.nn.functional.interpolate(gt_img, size=(self.image_res, self.image_res), mode='bilinear', align_corners=False)
             # Permute back to shape: [num_views, H, W, C]
             gt_img = gt_img.permute(0, 2, 3, 1)
 
@@ -294,3 +343,8 @@ class H5SceneDataset(Dataset):
             'fov': fov,
             'gt_img': gt_img
         }
+
+    def __del__(self):
+        # Close all H5 handles on destruction
+        for f in self._h5_handles.values():
+            f.close()
