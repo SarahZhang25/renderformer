@@ -34,6 +34,28 @@ def remesh(vertices, faces, target_face_num=3568):
     processed_mesh = ms.current_mesh()
     return processed_mesh.vertex_matrix(), processed_mesh.face_matrix()
 
+def robust_remesh(vertices, faces, target_face_num=1024):
+    """
+    A robust fallback that avoids isotropic explicit remeshing (which is prone to C++ deadlocks).
+    Uses clustering decimation for robustness followed by quadric edge collapse.
+    """
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(vertex_matrix=vertices, face_matrix=faces))
+    
+    # Clustering decimation is extremely robust to non-manifold or complex geometry
+    ms.meshing_decimation_clustering(
+        threshold=pymeshlab.PercentageValue(1.0)
+    )
+    
+    # Quadric edge collapse to hit the exact target face number
+    ms.meshing_decimation_quadric_edge_collapse(
+        targetfacenum=target_face_num,
+        qualitythr=1.0
+    )
+    
+    processed_mesh = ms.current_mesh()
+    return processed_mesh.vertex_matrix(), processed_mesh.face_matrix()
+
 
 if __name__ == '__main__':
     import argparse

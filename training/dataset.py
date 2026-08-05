@@ -40,7 +40,7 @@ def scene_collate_fn(batch):
         batched_data['mask'].append(mask)
         batched_data['vn'].append(vn)
         batched_data['c2w'].append(item['c2w'])
-        batched_data['fov'].append(item['fov'])
+        batched_data['fov'].append(item['camera_fov'])
         batched_data['gt_img'].append(item['gt_img'])
         
     return {k: torch.stack(v, dim=0) for k, v in batched_data.items()}
@@ -98,7 +98,7 @@ class SceneDataset(Dataset):
                 texture = texture[:, :, 0, 0]
             vn = torch.from_numpy(np.array(f['vn'])).float()
             c2w = torch.from_numpy(np.array(f['c2w'])).float()
-            fov = torch.from_numpy(np.array(f['fov'])).float()
+            fov = torch.from_numpy(np.array(f['camera_fov'])).float()
             mask = torch.ones(triangles.shape[0], dtype=torch.bool)
         
         num_views = c2w.shape[0]
@@ -131,7 +131,7 @@ class SceneDataset(Dataset):
             'mask': mask,
             'vn': vn,
             'c2w': c2w,
-            'fov': fov,
+            'camera_fov': fov,
             'gt_img': gt_img
         }
 
@@ -151,7 +151,7 @@ class SingleSceneDataset(Dataset):
                 self.texture = self.texture[:, :, 0, 0]
             self.vn = torch.from_numpy(np.array(f['vn'])).float()
             self.c2w = torch.from_numpy(np.array(f['c2w'])).float()
-            self.fov = torch.from_numpy(np.array(f['fov'])).float()
+            self.fov = torch.from_numpy(np.array(f['camera_fov'])).float()
             self.mask = torch.ones(self.num_tris, dtype=torch.bool)
         
         self.num_views = self.c2w.shape[0]
@@ -188,7 +188,7 @@ class SingleSceneDataset(Dataset):
             'mask': self.mask,
             'vn': self.vn,
             'c2w': self.c2w,
-            'fov': self.fov,
+            'camera_fov': self.fov,
             'gt_img': gt_img
         }
 
@@ -318,7 +318,7 @@ class H5SceneDataset(Dataset):
             texture = texture[:, :, 0, 0]
         vn = torch.from_numpy(np.array(grp['vn'])).float()
         c2w = torch.from_numpy(np.array(grp['c2w'])).float()
-        fov = torch.from_numpy(np.array(grp['fov'])).float()
+        fov = torch.from_numpy(np.array(grp['camera_fov'])).float()
         mask = torch.ones(triangles.shape[0], dtype=torch.bool)
         
         # Load embedded HDR image directly from HDF5
@@ -340,7 +340,7 @@ class H5SceneDataset(Dataset):
             'mask': mask,
             'vn': vn,
             'c2w': c2w,
-            'fov': fov,
+            'camera_fov': fov,
             'gt_img': gt_img
         }
 
