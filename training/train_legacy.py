@@ -1,4 +1,5 @@
 '''
+OUT OF DATE. TRAIN WITH https://github.com/SarahZhang25/Neural-Radiosity-Renderer
 Run with:
 python training/train.py --config training/train_config.yml
 CUDA_VISIBLE_DEVICES=0 python training/train.py --config training/train_config_71M.yml

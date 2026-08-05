@@ -16,7 +16,7 @@ import trimesh
 import numpy as np
 
 def find_objaverse_objects():
-    objaverse_dir = "/storage/sazhang/objaverse" # "/dev/shm/objaverse" # "/home/sazhang/.objaverse"
+    objaverse_dir = "/storage/sazhang/objaverse" # "/dev/shm/objaverse"
     # find all glb files
     glb_files = []
     for root, dirs, files in os.walk(objaverse_dir):
