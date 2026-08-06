@@ -50,32 +50,31 @@ model:
   use_ldr: False
 
 training:
-#  According to the linear scaling rule, 
-#  a 4x increase in batch size usually allows for a 4x increase in learning rate
-  global_batch_size: 128 #192 # 24 * 8
-  learning_rate: 1.0e-4 # RF paper suggests 1e-4 
+  global_batch_size: 192 # 64 * 3 
+  learning_rate: 3.0e-4 
   weight_decay: 0.01  # applied to weight matrices only; biases/norms exempt
   min_learning_rate: 1.0e-6
-  num_steps: 75000 # 
-  warmup_steps: 4000
-  save_interval_steps: 2500  # for visualization
+  clip_grad_norm: 1.0 
+  num_steps: 10000
+  warmup_steps: 500
+  save_interval_steps: 500  # for visualization
+  save_checkpoints: False #  TODO: flip this back for full runs!!!
   checkpoint_interval_steps: 15000  # for saving model checkpoint 
   log_interval_steps: 25
   image_res: 128
   data_dir: 
-      - "/dev/shm/datasets/dataset_uniform" # all 100k  
-  dataset_split_ratio: 0.99
-  log_dir: "training/logs/dataset_uniform_full"
-  run_name: "params71M_renderformer_d512" # Optional string tag for log dir name
-  # max_dataset_size: 10   # Optional max samples for dataset
+      - "/dev/shm/datasets/dataset_uniform_under4096" 
+  dataset_split_ratio: 0.9
+  max_dataset_size: 500   # max samples to use
   # shuffle_data: true # defaults to true
   # shuffle_data_seed: 42
+  log_dir: "training/logs/dataset_uniform_under4096_n500"
+  run_name: "params71M_res128_steps10k_renderformer" # Optional string tag for log dir name
   primary_loss: 'mae' # 'mse'
   lpips_backbone: 'alex' # 'vgg'
   lpips_loss_weighting: 0.05
   use_amp: True
-  use_compile: False
-  package_model: True
-  num_workers: 30
-  prefetch_factor: 12
-  cache_strategy: 'disk'
+  package_model: False # package model at end of run
+  num_workers: 16
+  prefetch_factor: 4
+  cache_strategy: 'vram'
