@@ -75,6 +75,7 @@ training:
   lpips_backbone: 'alex' # 'vgg'
   lpips_loss_weighting: 0.05
   use_amp: True
+  save_checkpoints: False # during run
   package_model: False # package model at end of run
   num_workers: 16
   prefetch_factor: 4
