@@ -55,6 +55,7 @@ training:
   global_batch_size: 128 #192 # 24 * 8
   learning_rate: 1.0e-4 # RF paper suggests 1e-4 
   weight_decay: 0.01  # applied to weight matrices only; biases/norms exempt
+  clip_grad_norm: 1.0 # Added to prevent model outputting negatives and causing dead gradients
   min_learning_rate: 1.0e-6
   num_steps: 75000 # 
   warmup_steps: 4000
