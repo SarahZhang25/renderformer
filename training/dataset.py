@@ -185,21 +185,86 @@ class H5SceneDataset(Dataset):
         f = self._get_h5_file(chunk_file)
         grp = f[scene_name]
         
-        triangles = torch.from_numpy(np.array(grp['triangles'])).float()
-        texture = torch.from_numpy(np.array(grp['texture'])).float()
-        if texture.dim() == 4:
-            texture = texture[:, :, 0, 0]
-        vn = torch.from_numpy(np.array(grp['vn'])).float()
-        c2w_np = np.array(grp['c2w'])
-        fov_np = np.array(grp['camera_fov'])
-        gt_img_np = grp['hdr_target_image'][:]
+        # 1. Triangles
+        if 'triangles' in grp:
+            triangles = torch.from_numpy(np.array(grp['triangles'])).float()
+        elif 'mesh_triangles' in grp:
+            triangles = torch.from_numpy(np.array(grp['mesh_triangles'])).float()
+        else:
+            raise KeyError(f"No triangles dataset found in scene '{scene_name}' of {chunk_file}")
 
+        # 2. Texture / Materials
+        if 'texture' in grp:
+            texture = torch.from_numpy(np.array(grp['texture'])).float()
+            if texture.dim() == 4:
+                texture = texture[:, :, 0, 0]
+        elif 'materials' in grp:
+            texture = torch.from_numpy(np.array(grp['materials'])).float()
+        elif 'entity_materials' in grp:
+            texture = torch.from_numpy(np.array(grp['entity_materials'])).float()
+        else:
+            texture = torch.zeros((triangles.shape[0], 3), dtype=torch.float32)
+
+        # 3. Vertex Normals
+        if 'vn' in grp:
+            vn = torch.from_numpy(np.array(grp['vn'])).float()
+        elif 'normals' in grp:
+            vn = torch.from_numpy(np.array(grp['normals'])).float()
+        elif 'obj_normals' in grp:
+            vn = torch.from_numpy(np.array(grp['obj_normals'])).float()
+        else:
+            # Fallback: compute face normals from triangles
+            v0 = triangles[:, 0, :]
+            v1 = triangles[:, 1, :]
+            v2 = triangles[:, 2, :]
+            fn = torch.cross(v1 - v0, v2 - v0, dim=-1)
+            norm = torch.norm(fn, dim=-1, keepdim=True)
+            norm = torch.clamp(norm, min=1e-8)
+            fn = (fn / norm).unsqueeze(1).repeat(1, 3, 1)
+            vn = fn
+
+        # 4. Camera Pose (c2w)
+        if 'c2w' in grp:
+            c2w_np = np.array(grp['c2w'])
+        elif 'camera_c2w' in grp:
+            c2w_np = np.array(grp['camera_c2w'])
+        elif 'cam_c2w' in grp:
+            c2w_np = np.array(grp['cam_c2w'])
+        else:
+            c2w_np = np.eye(4, dtype=np.float32)
+
+        # 5. Camera FOV (handling both 'camera_fov', 'fov', 'fov_deg', etc.)
+        if 'camera_fov' in grp:
+            fov_np = np.array(grp['camera_fov'])
+        elif 'fov' in grp:
+            fov_np = np.array(grp['fov'])
+        elif 'fov_deg' in grp:
+            fov_np = np.deg2rad(np.array(grp['fov_deg']))
+        elif 'camera_fov_rad' in grp:
+            fov_np = np.array(grp['camera_fov_rad'])
+        else:
+            fov_np = np.array([0.6981317, 0.6981317], dtype=np.float32)  # ~40 degrees
+
+        # 6. Target Image
+        if 'hdr_target_image' in grp:
+            gt_img_np = grp['hdr_target_image'][:]
+        elif 'target_image' in grp:
+            gt_img_np = grp['target_image'][:]
+        elif 'gt_img' in grp:
+            gt_img_np = grp['gt_img'][:]
+        elif 'image' in grp:
+            gt_img_np = grp['image'][:]
+        else:
+            raise KeyError(f"No image dataset found in scene '{scene_name}' of {chunk_file}")
+
+        # Multi-view indexing
         if gt_img_np.ndim == 4:
             V = gt_img_np.shape[0]
             v_idx = min(view_idx, V - 1)
             gt_img_np = gt_img_np[v_idx]
-            c2w_np = c2w_np[v_idx]
-            if isinstance(fov_np, np.ndarray) and fov_np.shape[0] == V:
+            if c2w_np.ndim == 3 and c2w_np.shape[0] == V:
+                c2w_np = c2w_np[v_idx]
+            if isinstance(fov_np, np.ndarray) and fov_np.ndim > 0 and fov_np.shape[0] == V:
                 fov_np = fov_np[v_idx]
 
         c2w = torch.from_numpy(c2w_np).float()
