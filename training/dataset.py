@@ -68,8 +68,8 @@ class H5SceneDataset(Dataset):
             
         self.image_res = image_res
         self.num_views_per_scene = 4
+        self._h5_handles = {}
 
-        
         # Glob all rf-formatted chunk files
         self.chunk_files = []
         for d in self.data_dirs:
@@ -80,19 +80,31 @@ class H5SceneDataset(Dataset):
         self.chunk_files = sorted(list(set(self.chunk_files)))
         
         # Build compact per-chunk metadata: one entry per chunk, not per sample.
+        valid_chunk_files = []
         self.chunk_meta = []  # list of (chunk_path, scene_names_list)
         for chunk_file in self.chunk_files:
-            with h5py.File(chunk_file, 'r') as f:
-                scene_names = list(f.keys())
-            self.chunk_meta.append((chunk_file, scene_names))
+            try:
+                with h5py.File(chunk_file, 'r') as f:
+                    scene_names = list(f.keys())
+                self.chunk_meta.append((chunk_file, scene_names))
+                valid_chunk_files.append(chunk_file)
+            except Exception as e:
+                print(f"[WARNING] Skipping unreadable/truncated RF H5 chunk {chunk_file}: {e}")
+        self.chunk_files = valid_chunk_files
             
         # chunk_offsets[i] = first global scene index in chunk i (in scenes)
-        scene_counts = np.array([len(names) for _, names in self.chunk_meta], dtype=np.int64)
-        self.chunk_offsets = np.concatenate([[0], np.cumsum(scene_counts)]).astype(np.int64)
-        total_scenes = int(self.chunk_offsets[-1])
-        total_samples = total_scenes * self.num_views_per_scene
+        if len(self.chunk_meta) == 0:
+            print(f"[WARNING] No valid RF dataset chunks found in {self.data_dirs}.")
+            self.chunk_offsets = np.array([0], dtype=np.int64)
+            total_scenes = 0
+            total_samples = 0
+        else:
+            scene_counts = np.array([len(names) for _, names in self.chunk_meta], dtype=np.int64)
+            self.chunk_offsets = np.concatenate([[0], np.cumsum(scene_counts)]).astype(np.int64)
+            total_scenes = int(self.chunk_offsets[-1])
+            total_samples = total_scenes * self.num_views_per_scene
         
-        if max_dataset_size is not None:
+        if max_dataset_size is not None and total_scenes > 0:
             max_scenes = max_dataset_size // self.num_views_per_scene
             if max_scenes < total_scenes:
                 total_scenes = max_scenes
