@@ -102,7 +102,7 @@ class RenderFormerRenderingPipeline:
         # Flatten triangles: [bs, num_tris, 3, 3] -> [bs, num_tris*9]
         # Flatten vn: [bs, num_tris, 3, 3] -> [bs, num_tris*9]
         # Flatten tri_vpos_view_tf: [bs, nv, num_tris, 3, 3] -> [bs, nv, num_tris*9]
-        with torch.no_grad(), torch.autocast(device_type=self.device.type, dtype=torch_dtype):
+        with torch.autocast(device_type=self.device.type, dtype=torch_dtype):
             rendered_imgs = self.model(
                 triangles.reshape(bs, -1, 9),
                 texture,
