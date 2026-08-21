@@ -56,10 +56,13 @@ class H5SceneDataset(Dataset):
         data_dir, # can be a string or a list of strings
         image_res: int = 128,
         max_dataset_size: int = None,
+        max_train_scenes: int = None,
         split: str = "all",
         split_ratio: float = 0.9,
         shuffle: bool = True,
-        shuffle_seed: int = 42
+        shuffle_seed: int = 42,
+        augment_rotation: bool = False,
+        augment_permute: bool = False
     ):
         if isinstance(data_dir, str):
             self.data_dirs = [data_dir]
@@ -107,11 +110,28 @@ class H5SceneDataset(Dataset):
             split_idx = int(total_scenes * split_ratio) * self.num_views_per_scene
             if split == 'train':
                 sample_order = sample_order[:split_idx]
+                # max_train_scenes shrinks the TRAINING set only. max_dataset_size cannot
+                # be used for this: it truncates before the split, so lowering it shrinks
+                # the validation set too and a dataset-scaling curve would compare points
+                # measured on different held-out scenes. Truncating here keeps validation
+                # fixed, and taking a prefix makes the smaller training sets nested
+                # subsets of the larger ones, so consecutive points on the curve differ
+                # only in how many scenes were added.
+                if max_train_scenes is not None:
+                    keep = max_train_scenes * self.num_views_per_scene
+                    if keep < len(sample_order):
+                        sample_order = sample_order[:keep]
             else:
                 sample_order = sample_order[split_idx:]
                 
         self.shuffle = shuffle
         self.shuffle_seed = shuffle_seed
+        # Same exact augmentation as the NMR path, so a run with augmentation on stays a
+        # like-for-like comparison between the two architectures.
+        self.split = split
+        self.augment_rotation = bool(augment_rotation) and split == 'train'
+        self.augment_permute = bool(augment_permute) and split == 'train'
+        self._epoch = 0
         self.original_sample_order = sample_order.copy()
         self.sample_order = sample_order
         
@@ -124,6 +144,7 @@ class H5SceneDataset(Dataset):
         self._h5_handles = {}
 
     def set_epoch(self, epoch: int):
+        self._epoch = int(epoch)
         if not self.shuffle:
             return
             
@@ -174,21 +195,33 @@ class H5SceneDataset(Dataset):
         grp = f[scene_name]
         
         triangles = torch.from_numpy(np.array(grp['triangles'])).float()
-        texture = torch.from_numpy(np.array(grp['texture'])).float()
-        if texture.dim() == 4:
-            texture = texture[:, :, 0, 0]
+
+        # Slice inside HDF5 rather than after: this used to read the whole
+        # (2184, 13, 32, 32) float16 texture -- ~58 MB per sample -- and then keep only
+        # [:, :, 0, 0] (~57 KB). With chunks=(273, 2, 8, 8) the sliced read touches
+        # 56 of 896 chunks instead of all of them.
+        tex_ds = grp['texture']
+        if tex_ds.ndim == 4:
+            texture = torch.from_numpy(tex_ds[:, :, 0, 0]).float()
+        else:
+            texture = torch.from_numpy(tex_ds[:]).float()
+
         vn = torch.from_numpy(np.array(grp['vn'])).float()
         c2w_np = np.array(grp['c2w'])
         fov_np = np.array(grp['camera_fov'])
-        gt_img_np = grp['hdr_target_image'][:]
 
-        if gt_img_np.ndim == 4:
-            V = gt_img_np.shape[0]
+        # Same idea for the target image: hdr_target_image is (V, 512, 512, 4) float32
+        # = 16 MB, and only one view is ever used. Read that view only.
+        img_ds = grp['hdr_target_image']
+        if img_ds.ndim == 4:
+            V = img_ds.shape[0]
             v_idx = min(view_idx, V - 1)
-            gt_img_np = gt_img_np[v_idx]
+            gt_img_np = img_ds[v_idx]
             c2w_np = c2w_np[v_idx]
             if isinstance(fov_np, np.ndarray) and fov_np.shape[0] == V:
                 fov_np = fov_np[v_idx]
+        else:
+            gt_img_np = img_ds[:]
 
         c2w = torch.from_numpy(c2w_np).float()
         fov = torch.tensor(fov_np).float()
@@ -207,7 +240,7 @@ class H5SceneDataset(Dataset):
             # Permute back to shape: [H, W, C]
             gt_img = gt_img.squeeze(0).permute(1, 2, 0)
 
-        return {
+        sample = {
             'triangles': triangles,
             'texture': texture,
             'mask': mask,
@@ -216,6 +249,17 @@ class H5SceneDataset(Dataset):
             'camera_fov': fov,
             'gt_img': gt_img
         }
+
+        if self.augment_rotation or self.augment_permute:
+            from training.augment import (permute_entities, random_rotation,
+                                          rotate_sample, sample_rng)
+            rng = sample_rng(self.shuffle_seed, self._epoch, idx)
+            if self.augment_rotation:
+                rotate_sample(sample, random_rotation(rng), ('triangles', 'vn'))
+            if self.augment_permute:
+                permute_entities(sample, ('triangles', 'texture', 'mask', 'vn'), rng)
+
+        return sample
 
     def __del__(self):
         # Close all H5 handles on destruction
