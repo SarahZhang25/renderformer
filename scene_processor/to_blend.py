@@ -104,6 +104,11 @@ def scene_to_img(
         bpy.context.scene.render.resolution_x = resolution
         bpy.context.scene.render.resolution_y = resolution
         bpy.context.scene.render.engine = 'CYCLES'
+        # Fleet mode: many worker processes share one node - cap Blender's
+        # internal thread pool or each worker spawns ~cores threads (386 seen)
+        # and 128 workers melt the box (BLENDER_THREADS env, default 2).
+        bpy.context.scene.render.threads_mode = 'FIXED'
+        bpy.context.scene.render.threads = int(os.environ.get('BLENDER_THREADS', '2'))
         bpy.context.scene.cycles.samples = spp
         bpy.context.scene.render.film_transparent = True
         bpy.context.scene.render.image_settings.color_mode = 'RGBA'
