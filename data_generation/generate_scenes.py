@@ -16,7 +16,7 @@ import trimesh
 import numpy as np
 
 def find_objaverse_objects():
-    objaverse_dir = "/storage/sazhang/objaverse" # "/dev/shm/objaverse"
+    objaverse_dir = os.environ.get("OBJAVERSE_GLB_DIR", "/data/scratch/frankzydou/objaverse/glbs")
     # find all glb files
     glb_files = []
     for root, dirs, files in os.walk(objaverse_dir):
@@ -70,6 +70,15 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
     walls_to_remove = random.sample(wall_keys, 3 - num_walls_to_keep)
     for k in walls_to_remove:
         if k in scene.get('objects', {}):
+            del scene['objects'][k]
+
+    # Paper-faithful light sampling: keep a random subset of template lights
+    # (original protocol: 1-8 light sources). Enabled via GEN_MIN/MAX_LIGHTS.
+    _lmin = os.environ.get("GEN_MIN_LIGHTS")
+    if _lmin is not None:
+        light_keys = [k for k in list(scene.get('objects', {}).keys()) if k.startswith("light_")]
+        keep = random.randint(int(_lmin), min(int(os.environ.get("GEN_MAX_LIGHTS", len(light_keys))), len(light_keys)))
+        for k in random.sample(light_keys, len(light_keys) - keep):
             del scene['objects'][k]
 
     # Wall color randomization biased towards neutral colors
@@ -133,7 +142,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
         random_diffuse_type = random.choices(population=["per-shading-group", "procedural", "per-triangle"], weights=[0.5, 0.3, 0.2], k=1)[0] 
     
     # 1 to 12 random objects
-    num_objects = random.randint(1, 6)
+    num_objects = random.randint(int(os.environ.get("GEN_MIN_OBJECTS", 1)), int(os.environ.get("GEN_MAX_OBJECTS", 6)))
     selected_objects = random.sample(objaverse_objects, min(num_objects, len(objaverse_objects)))
 
     scene['scene_name'] = f"scene_{random_diffuse_type}_{scene_idx}"
@@ -293,7 +302,7 @@ def generate_scene(template_json, objaverse_objects, scene_idx, output_dir, num_
                 "procedural_color_b": procedural_color_b
             },
             "remesh": True,
-            "remesh_target_face_num": 1024 #remesh_target
+            "remesh_target_face_num": (max(256, (int(os.environ["GEN_TRI_BUDGET"]) - 120) // num_objects) if os.environ.get("GEN_TRI_BUDGET") else 1024),
         }
         
     # Camera

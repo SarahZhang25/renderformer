@@ -12,9 +12,9 @@ random.seed(42)
 MAX_VERTEX_COUNT = 50000
 
 # Set base paths to your custom directory
-objaverse.BASE_PATH = "/home/sazhang/.objaverse"
+objaverse.BASE_PATH = os.environ.get("OBJAVERSE_BASE", "/data/scratch/frankzydou/objaverse/.objaverse")
 objaverse._VERSIONED_PATH = os.path.join(objaverse.BASE_PATH, "hf-objaverse-v1")
-GLB_DOWNLOAD_DIR = "/dev/shm/objaverse"
+GLB_DOWNLOAD_DIR = os.environ.get("GLB_DOWNLOAD_DIR", "/data/scratch/frankzydou/objaverse/glbs")
 
 def select_uids(num_objects=10, max_vertex_count=MAX_VERTEX_COUNT):
     print("Fetching LVIS annotations...")
@@ -112,26 +112,32 @@ def download_objects_with_progress(uids, download_dir=GLB_DOWNLOAD_DIR, max_work
             tmp_local_path = local_path + ".tmp"
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             
-            # max_retries = 5
-            # for attempt in range(max_retries):
-                # try:
-            urllib.request.urlretrieve(hf_url, tmp_local_path)
-            os.rename(tmp_local_path, local_path)
-            return uid, local_path
-                # except urllib.error.HTTPError as e:
-                #     if e.code == 429:
-                #         # Exponential backoff on 429 Too Many Requests
-                #         sleep_time = (2 ** attempt) + random.uniform(0, 1)
-                #         time.sleep(sleep_time)
-                #     else:
-                #         raise e
-            # raise Exception(f"Failed to download {uid} after {max_retries} retries due to rate limiting.")
+            max_retries = 7
+            for attempt in range(max_retries):
+                try:
+                    urllib.request.urlretrieve(hf_url, tmp_local_path)
+                    os.rename(tmp_local_path, local_path)
+                    return uid, local_path
+                except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        time.sleep((2 ** attempt) + random.uniform(0, 1))
+                    else:
+                        raise e
+            raise Exception(f"Failed to download {uid} after {max_retries} retries (rate limited).")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(download_single, item) for item in to_download]
+            n_failed = 0
             for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Downloading models"):
-                uid, local_path = future.result()
-                out[uid] = local_path
+                try:
+                    uid, local_path = future.result()
+                    out[uid] = local_path
+                except Exception as e:
+                    n_failed += 1
+                    if n_failed <= 5 or n_failed % 100 == 0:
+                        print(f"[warn] download failed ({n_failed} so far): {str(e)[:120]}")
+            if n_failed:
+                print(f"TOTAL FAILED: {n_failed} of {len(futures)}")
             
     return out
 
