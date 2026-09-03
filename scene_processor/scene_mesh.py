@@ -40,10 +40,19 @@ def normalize_to_unit_sphere(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     return mesh
 
 
-def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_config_dir: str) -> None:
-    """Generate combined mesh from scene configuration using trimesh.Scene"""
+def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_config_dir: str,
+                        geom_cache_path: str = None) -> None:
+    """Generate combined mesh from scene configuration using trimesh.Scene
+
+    With geom_cache_path set, each object's post-normalize/post-remesh geometry is
+    cached there along with its object-to-world matrix, and the h5 converter reuses
+    it instead of repeating trimesh.load + pymeshlab remesh. That second pass is the
+    single most expensive step in the pipeline and produces, by construction, exactly
+    what this function already computed.
+    """
     split_mesh_folder_path = os.path.dirname(output_path) + '/split'
     os.makedirs(split_mesh_folder_path, exist_ok=True)
+    geom_cache = {} if geom_cache_path else None
 
     for obj_key, obj_config in scene_config.objects.items():
         # if obj_config.mesh_path.endswith(".glb") or ("shapenet" in obj_config.mesh_path.lower()):
@@ -77,6 +86,13 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
             )
 
 
+
+        # Snapshot before shading/colouring: those steps re-lay-out vertices but keep
+        # the same triangles, so this is the surface the renderer draws and the surface
+        # the converter samples.
+        if geom_cache is not None:
+            cached_v = np.asarray(mesh.vertices, dtype=np.float64).copy()
+            cached_f = np.asarray(mesh.faces, dtype=np.int64).copy()
 
         if obj_config.material.smooth_shading:
             mesh = trimesh.graph.smooth_shade(mesh, angle=np.radians(30))
@@ -127,17 +143,38 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
         transform = obj_config.transform
 
         # first apply rotation, then scale, then translation
+        obj_to_world = np.eye(4)
         for axis, angle in enumerate(transform.rotation):
             axis_array = np.array([1, 0, 0] if axis == 0 else [0, 1, 0] if axis == 1 else [0, 0, 1]).astype(float)
             rotation_matrix = trimesh.transformations.rotation_matrix(
                 np.deg2rad(angle), axis_array
             )
             mesh.apply_transform(rotation_matrix)
-        
+            obj_to_world = rotation_matrix @ obj_to_world
+
         mesh.apply_scale(transform.scale)
         mesh.apply_translation(transform.translation)
+        # The same three operations as one matrix. This is exactly what
+        # utils.get_transform_matrix(..., apply_normalize=False) rebuilds from the JSON;
+        # recording it here means the converter never has to rebuild it.
+        scale_vec = transform.scale if hasattr(transform.scale, '__len__') else [transform.scale] * 3
+        obj_to_world = np.diag([scale_vec[0], scale_vec[1], scale_vec[2], 1.0]) @ obj_to_world
+        obj_to_world = trimesh.transformations.translation_matrix(transform.translation) @ obj_to_world
+
+        if geom_cache is not None:
+            geom_cache[obj_key] = (cached_v, cached_f, obj_to_world)
 
         print(f'object {obj_key} vertex normals:', mesh.vertex_normals.shape)  # must have this line to trigger the calculation of vertex normals
 
         # Save individual meshes
         mesh.export(f"{split_mesh_folder_path}/{obj_key}.obj", include_normals=True, include_texture=True)
+
+    if geom_cache is not None:
+        # Written only once every object succeeded, then renamed into place, so a
+        # converter racing the renderer never observes a partial cache.
+        arrays = {'__keys__': np.array(list(geom_cache.keys()))}
+        for i, (k, (v, f, m)) in enumerate(geom_cache.items()):
+            arrays[f'v{i}'], arrays[f'f{i}'], arrays[f'M{i}'] = v, f, m
+        tmp = geom_cache_path + '.tmp.npz'   # savez_compressed appends .npz otherwise
+        np.savez_compressed(tmp, **arrays)
+        os.replace(tmp, geom_cache_path)

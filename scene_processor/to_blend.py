@@ -106,9 +106,9 @@ def scene_to_img(
         bpy.context.scene.render.engine = 'CYCLES'
         # Fleet mode: many worker processes share one node - cap Blender's
         # internal thread pool or each worker spawns ~cores threads (386 seen)
-        # and 128 workers melt the box (BLENDER_THREADS env, default 2).
+        # and 128 workers melt the box (BLENDER_THREADS env, default 8).
         bpy.context.scene.render.threads_mode = 'FIXED'
-        bpy.context.scene.render.threads = int(os.environ.get('BLENDER_THREADS', '2'))
+        bpy.context.scene.render.threads = int(os.environ.get('BLENDER_THREADS', '8'))
         bpy.context.scene.cycles.samples = spp
         bpy.context.scene.render.film_transparent = True
         bpy.context.scene.render.image_settings.color_mode = 'RGBA'
@@ -121,8 +121,14 @@ def scene_to_img(
             if device.type == BLENDER_BACKEND or (BLENDER_BACKEND == 'OPTIX' and device.type == 'CUDA'):
                 device.use = True
         bpy.context.scene.cycles.device = 'GPU'
-        bpy.context.scene.render.threads = 8
+        # Re-assert the thread cap after the device switch. This used to hardcode 8,
+        # silently discarding the BLENDER_THREADS value read above, so every worker ran
+        # 8 Cycles threads no matter what the operator set. That makes the oversubscription
+        # rule in HANDOFF.md section 3.5 impossible to satisfy: 80 workers at a nominal
+        # BLENDER_THREADS=2 is 160 threads on paper but 640 in reality.
+        # Default 8 (not the 2 the dead lookup used) so unset means unchanged behaviour.
         bpy.context.scene.render.threads_mode = 'FIXED'
+        bpy.context.scene.render.threads = int(os.environ.get('BLENDER_THREADS', '8'))
 
         bpy.context.scene.world.node_tree.nodes["Background"].inputs[1].default_value = 0.  # remove all ambient
 
@@ -202,7 +208,8 @@ if __name__ == "__main__":
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_mesh_path = os.path.join(temp_dir, "temp_mesh.obj")
             print(f"Generating mesh in temporary path: {temp_mesh_path}")
-            generate_scene_mesh(scene_config, temp_mesh_path, os.path.dirname(args.scene_config))
+            generate_scene_mesh(scene_config, temp_mesh_path, os.path.dirname(args.scene_config),
+                                geom_cache_path=output_base + '_geom.npz')
             scene_to_img(
                 scene_config=scene_config,
                 mesh_path=temp_mesh_path,
@@ -215,7 +222,8 @@ if __name__ == "__main__":
             )
     else:
         print(f"Using provided mesh path: {args.mesh_path}")
-        generate_scene_mesh(scene_config, args.mesh_path, os.path.dirname(args.scene_config))
+        generate_scene_mesh(scene_config, args.mesh_path, os.path.dirname(args.scene_config),
+                            geom_cache_path=output_base + '_geom.npz')
         scene_to_img(
             scene_config=scene_config,
             mesh_path=args.mesh_path,

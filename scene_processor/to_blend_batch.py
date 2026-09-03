@@ -32,7 +32,9 @@ def render_one(json_path, out_dir, resolution, spp):
     output_base = os.path.join(out_dir, base)
     with tempfile.TemporaryDirectory() as td:
         mesh = os.path.join(td, "temp_mesh.obj")
-        generate_scene_mesh(cfg, mesh, os.path.dirname(json_path))
+        # Cache the built geometry beside the EXRs for the h5 converter to reuse.
+        generate_scene_mesh(cfg, mesh, os.path.dirname(json_path),
+                            geom_cache_path=output_base + '_geom.npz')
         to_blend.scene_to_img(
             scene_config=cfg, mesh_path=mesh, output_image_path=output_base,
             dump_blend_file=False, save_img=False,
@@ -56,24 +58,28 @@ def main():
     tag = f".c{os.getpid()}"
     done = fails = 0
     idle_t0 = time.time()
+    cands = []
     while True:
-        cands = glob.glob(os.path.join(a.scene_dir, 'scene_*.json'))
         if not cands:
-            if time.time() - idle_t0 > a.idle_exit_s:
-                break
-            time.sleep(20)
-            continue
-        random.shuffle(cands)
+            # One directory scan per ~thousands of claims: a 500k-entry dir
+            # costs seconds per glob and 48 workers doing it per-scene was
+            # the fleet's real bottleneck.
+            cands = glob.glob(os.path.join(a.scene_dir, 'scene_*.json'))
+            random.shuffle(cands)
+            if not cands:
+                if time.time() - idle_t0 > a.idle_exit_s:
+                    break
+                time.sleep(20)
+                continue
         claimed = None
-        for c in cands[:64]:
+        while cands and not claimed:
+            c = cands.pop()
             try:
                 os.rename(c, c + tag)
                 claimed = c + tag
-                break
             except OSError:
                 continue
         if not claimed:
-            time.sleep(3)
             continue
         idle_t0 = time.time()
         if a.heartbeat:
