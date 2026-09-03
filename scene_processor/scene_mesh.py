@@ -7,10 +7,41 @@ from typing import Dict
 import random
 try:
     from scene_config import SceneConfig, MaterialConfig
-    from remesh import remesh
+    from remesh import remesh, robust_remesh
 except ImportError:
     from renderformer.renderformer.scene_processor.scene_config import SceneConfig, MaterialConfig
-    from renderformer.renderformer.scene_processor.remesh import remesh
+    from renderformer.renderformer.scene_processor.remesh import remesh, robust_remesh
+
+
+def safe_remesh(vertices, faces, target_face_num, tolerance=1.5):
+    """Remesh with a guard against pymeshlab blow-ups.
+
+    pymeshlab's isotropic explicit remeshing occasionally returns vertices thousands of
+    units away from its input (seen on ~0.5 % of Objaverse objects, all non-watertight,
+    deterministic per mesh). The renderer then draws the object as giant shards and the
+    dataset stores the same garbage, in ~5 % of scenes. Any result whose vertices leave
+    a sphere of `tolerance` x the input's own radius (about its centroid) is rejected;
+    the clustering-based robust_remesh is tried next; if that fails too, the input is
+    returned unchanged (more faces than the target, but correct geometry).
+
+    Returns (vertices, faces, method) with method in {'remesh', 'robust_remesh', 'none'}.
+    Both the renderer and the h5 converter must call this, so that they stay identical.
+    """
+    vertices = np.asarray(vertices, dtype=np.float64); faces = np.asarray(faces)
+    center = vertices.mean(axis=0)
+    radius = np.linalg.norm(vertices - center, axis=1).max()
+    limit = tolerance * radius + 1e-6
+    for fn in (remesh, robust_remesh):
+        try:
+            v, f = fn(vertices, faces, target_face_num)
+        except Exception:
+            continue
+        v = np.asarray(v); f = np.asarray(f)
+        if len(f) == 0 or not np.isfinite(v).all():
+            continue
+        if np.linalg.norm(v - center, axis=1).max() <= limit:
+            return v, f, fn.__name__
+    return vertices, faces, 'none'
 
 def get_procedural_color(vertices: np.ndarray, config: MaterialConfig) -> np.ndarray:
     pattern = config.procedural_pattern
@@ -77,8 +108,8 @@ def generate_scene_mesh(scene_config: SceneConfig, output_path: str, scene_confi
             mesh = normalize_to_unit_sphere(mesh)
         # Remesh if existing is greater than target number
         if obj_config.remesh and mesh.faces.shape[0] > obj_config.remesh_target_face_num:
-            new_v, new_f = remesh(mesh.vertices, mesh.faces, obj_config.remesh_target_face_num)
-            print(f'remesh {obj_key} from {mesh.faces.shape[0]} to {new_f.shape[0]}')
+            new_v, new_f, how = safe_remesh(mesh.vertices, mesh.faces, obj_config.remesh_target_face_num)
+            print(f'remesh {obj_key} from {mesh.faces.shape[0]} to {new_f.shape[0]} via {how}')
             mesh = trimesh.Trimesh(
                 vertices=new_v,
                 faces=new_f,
